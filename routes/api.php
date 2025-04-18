@@ -148,8 +148,9 @@ Route::post('/pawapay/{eventType}/webhook', [PawaPayController::class, 'handleWe
 
 // Routes pour les paiements Mobile Money avec PawaPay (nécessitent authentification)
 Route::middleware('auth:api')->group(function () {
-    Route::post('/orders/pay-with-momo', [PawaPayTransactionController::class, 'initiatePayment']);
-    Route::get('/pawapay/transactions', [PawaPayTransactionController::class, 'getUserTransactions']);
+    Route::post('/orders/pay-with-momo', [PawaPayController::class, 'initiatePayment']);
+    Route::get('/pawapay/transactions', [PawaPayController::class, 'getUserTransactions']);
+    Route::get('/pawapay/deposits/{providerTransactionId}/status', [PawaPayController::class, 'checkDepositStatus']);
 });
 
 // Routes pour les paiements des commandes

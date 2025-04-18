@@ -32,10 +32,9 @@ return [
     ],
     'pawapay' => [
         'api_key' => env('PAWAPAY_API_KEY', ''),
-        'api_secret' => env('PAWAPAY_API_SECRET', ''),
-        'base_url' => env('PAWAPAY_BASE_URL', 'https://api.pawapay.com/v1'),
+        'api_token' => env('PAWAPAY_API_TOKEN', ''),
+        'base_url' => env('PAWAPAY_BASE_URL', 'https://api.sandbox.pawapay.io'),
         'webhook_secret' => env('PAWAPAY_WEBHOOK_SECRET', ''),
-        'fee_percentage' => env('PAWAPAY_FEE_PERCENTAGE', 1.5),
         'private_key_path' => env('PAWAPAY_PRIVATE_KEY_PATH', 'app/keys/private_key.pem'),
         'public_key_path' => env('PAWAPAY_PUBLIC_KEY_PATH', 'app/keys/public_key.pem'),
         'pawapay_public_key_path' => env('PAWAPAY_PUBLIC_KEY_PATH', 'app/keys/pawapay_public_key.pem'),

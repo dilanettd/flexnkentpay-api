@@ -8,3 +8,4 @@ class Constants
     const BALANCE_UPDATE_WITHDRAW = 'withdrawal';
     const BALANCE_WITHDRAW_REFUND = 'refund';
 }
+
