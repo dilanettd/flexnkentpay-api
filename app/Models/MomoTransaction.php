@@ -17,6 +17,7 @@ class MomoTransaction extends Model
         'amount',
         'fees',
         'status',
+        'provider_type',
     ];
 
     public function user()

@@ -15,6 +15,10 @@ use App\Http\Controllers\ShopReviewController;
 use App\Http\Controllers\ProductReviewController;
 use App\Http\Controllers\MomoTransactionController;
 use App\Http\Controllers\DashboardController;
+use App\Http\Controllers\PawaPayController;
+use App\Http\Controllers\PawaPayTransactionController;
+use App\Http\Controllers\OrderPaymentController;
+use App\Http\Controllers\FeeController;
 
 
 /*
@@ -115,6 +119,7 @@ Route::middleware('auth:api')->group(function () {
     Route::get('/orders/user', [OrderController::class, 'getUserOrders']);
     Route::get('/orders/seller', [OrderController::class, 'getSellerOrders']);
     Route::delete('/orders/{id}/cancel', [OrderController::class, 'cancelOrder']);
+    Route::post('/orders/{orderId}/retry-confirmation', [OrderController::class, 'retryConfirmationPayment']);
 });
 
 
@@ -134,4 +139,34 @@ Route::middleware('auth:api')->group(function () {
     Route::get('/dashboard-stats', [DashboardController::class, 'getDashboardStats']);
     Route::get('/admin/products', [ProductController::class, 'getAdminProducts']);
     Route::post('/admin/products/{id}/toggle', [ProductController::class, 'toggleActive']);
+});
+
+
+
+// Routes PawaPay
+Route::post('/pawapay/{eventType}/webhook', [PawaPayController::class, 'handleWebhook']);
+
+// Routes pour les paiements Mobile Money avec PawaPay (nécessitent authentification)
+Route::middleware('auth:api')->group(function () {
+    Route::post('/orders/pay-with-momo', [PawaPayTransactionController::class, 'initiatePayment']);
+    Route::get('/pawapay/transactions', [PawaPayTransactionController::class, 'getUserTransactions']);
+});
+
+// Routes pour les paiements des commandes
+Route::middleware('auth:api')->group(function () {
+    Route::post('/order-payments/pay', [OrderPaymentController::class, 'initiatePayment']);
+    Route::get('/order-payments/pending', [OrderPaymentController::class, 'getPendingPayments']);
+    Route::get('/order-payments/orders/{orderId}', [OrderPaymentController::class, 'getOrderPayments']);
+    Route::get('/order-payments/{paymentId}', [OrderPaymentController::class, 'getPaymentDetails']);
+});
+
+// Routes pour la gestion des frais (Fees)
+Route::middleware(['auth:api'])->group(function () {
+    Route::get('/fees/{name}', [FeeController::class, 'show']);
+    Route::get('/fees', [FeeController::class, 'index']);
+    Route::post('/fees', [FeeController::class, 'store']);
+    Route::put('/fees/{id}', [FeeController::class, 'update']);
+    Route::delete('/fees/{id}', [FeeController::class, 'destroy']);
+    Route::put('/fees/{id}/activate', [FeeController::class, 'activate']);
+    Route::get('/fees/active', [FeeController::class, 'getActiveFees']);
 });

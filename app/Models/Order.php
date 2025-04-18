@@ -24,7 +24,9 @@ class Order extends Model
         'installment_count',
         'remaining_installments',
         'is_completed',
-
+        'is_confirmed',
+        'reminder_type',
+        'fees'
     ];
 
     public function user()
