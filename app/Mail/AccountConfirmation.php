@@ -5,25 +5,62 @@ namespace App\Mail;
 use Illuminate\Bus\Queueable;
 use Illuminate\Mail\Mailable;
 use Illuminate\Queue\SerializesModels;
+use Illuminate\Support\Facades\App;
 
 class AccountConfirmation extends Mailable
 {
     use Queueable, SerializesModels;
 
-    public $userName;
-    public $link;
+    public $user;
+    public $verificationUrl;
 
-    public function __construct($userName, $link)
+    /**
+     * Create a new message instance.
+     *
+     * @param  mixed  $user
+     * @param  string  $verificationUrl
+     * @return void
+     */
+    public function __construct($user, $verificationUrl)
     {
-        $this->userName = $userName;
-        $this->link = $link;
+        $this->user = $user;
+        $this->verificationUrl = $verificationUrl;
     }
 
+    /**
+     * Build the message.
+     *
+     * @return $this
+     */
     public function build()
     {
-        return $this->subject(__('Account Confirmation'))
+        // Get user's preferred language or use app default
+        $locale = $this->getUserLocale();
+
+        // Set locale for this email
+        App::setLocale($locale);
+
+        return $this->subject(__('email.confirmation_subject'))
             ->markdown('emails.confirmation')
-            ->with(['userName' => $this->userName, 'link' => $this->link]);
+            ->with([
+                'name' => $this->user->name,
+                'verificationUrl' => $this->verificationUrl
+            ]);
+    }
+
+    /**
+     * Get user locale preference
+     * 
+     * @return string
+     */
+    protected function getUserLocale()
+    {
+        // Try to get user preference, if available
+        if ($this->user->preference && $this->user->preference->language) {
+            return $this->user->preference->language;
+        }
+
+        // Default to application locale
+        return config('app.locale');
     }
 }
-

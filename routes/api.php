@@ -135,9 +135,13 @@ Route::post('/admin/add-permissions', [AuthController::class, 'addPermissionsToA
 
 //Dashboard
 Route::middleware('auth:api')->group(function () {
+    Route::put('/admin/users/{id}/status', [UserController::class, 'updateStatus']);
     Route::get('/dashboard-stats', [DashboardController::class, 'getDashboardStats']);
+    Route::get('/admin/users', [UserController::class, 'getAllUsers']);
+    Route::get('/admin/orders', [OrderController::class, 'getAllOrders']);
     Route::get('/admin/products', [ProductController::class, 'getAdminProducts']);
     Route::post('/admin/products/{id}/toggle', [ProductController::class, 'toggleActive']);
+    Route::get('/admin/transactions', [MomoTransactionController::class, 'getAllTransactions']);
 });
 
 

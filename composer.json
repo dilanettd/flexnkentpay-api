@@ -8,6 +8,7 @@
         "php": "^8.1",
         "aws/aws-sdk-php": "^3.324",
         "bacon/bacon-qr-code": "^2.0",
+        "barryvdh/laravel-dompdf": "^3.1",
         "guzzlehttp/guzzle": "^7.2",
         "illuminate/mail": "*",
         "laravel/framework": "^10.10",

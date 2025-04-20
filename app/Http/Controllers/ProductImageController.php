@@ -49,8 +49,6 @@ class ProductImageController extends Controller
             // Create a new ProductImage entry
             ProductImage::create([
                 "image_url" => $imageUrl,
-                'width' => getimagesize($image->getPathname())[0],
-                'height' => getimagesize($image->getPathname())[1],
                 "product_id" => $request->product_id,
             ]);
         }

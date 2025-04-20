@@ -7,7 +7,7 @@ use App\Models\PawaPayWebhook;
 use App\Models\MomoTransaction;
 use App\Models\User;
 use App\Models\OrderPayment;
-use App\Models\Order;
+use App\Events\OrderPaymentSuccessful;
 use App\Models\ProviderUsage;
 use App\Models\PawaPay;
 use App\Utils\Constants;
@@ -15,6 +15,7 @@ use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 use Carbon\Carbon;
+use App\Events\FirstOrderPaymentSuccessful;
 use App\Services\PawaPaySignatureService;
 
 class PawaPayController extends Controller
@@ -488,17 +489,26 @@ class PawaPayController extends Controller
             if ($orderPayment->installment_number == 1) {
                 $order->is_confirmed = true;
 
+                event(new FirstOrderPaymentSuccessful($order, $orderPayment));
+
                 Log::info("[PawaPay handleSuccessfulTransaction] Order confirmed", [
                     'order_id' => $order->id,
                     'payment_id' => $orderPayment->id
                 ]);
             }
 
-            if ($order->remaining_amount <= 0) {
+            $isLastPayment = $order->remaining_installments <= 0 || $order->remaining_amount <= 0;
+
+            if ($isLastPayment) {
                 $order->is_completed = true;
             }
 
             $order->save();
+
+            // Déclencher l'événement pour tout paiement réussi (autre que le premier)
+            if ($orderPayment->installment_number > 1) {
+                event(new OrderPaymentSuccessful($order, $orderPayment, $isLastPayment));
+            }
 
             ProviderUsage::updateDepositUsage('pawapay', $amount);
 
@@ -507,7 +517,8 @@ class PawaPayController extends Controller
                 'order_id' => $order->id,
                 'status' => 'success',
                 'is_confirmed' => $order->is_confirmed,
-                'is_completed' => $order->is_completed
+                'is_completed' => $order->is_completed,
+                'is_last_payment' => $isLastPayment
             ]);
         }
     }
@@ -531,18 +542,26 @@ class PawaPayController extends Controller
 
         if ($orderPayment->installment_number == 1) {
             $order->is_confirmed = true;
+            event(new FirstOrderPaymentSuccessful($order, $orderPayment));
         }
 
-        if ($order->remaining_installments <= 0 || $order->remaining_amount <= 0) {
+        $isLastPayment = $order->remaining_installments <= 0 || $order->remaining_amount <= 0;
+
+        if ($isLastPayment) {
             $order->is_completed = true;
         }
 
         $order->save();
 
+        if ($orderPayment->installment_number > 1) {
+            event(new OrderPaymentSuccessful($order, $orderPayment, $isLastPayment));
+        }
+
         Log::info('Paiement mis à jour avec succès', [
             'order_id' => $order->id,
             'payment_id' => $orderPayment->id,
-            'transaction_id' => $transaction->transaction_id
+            'transaction_id' => $transaction->transaction_id,
+            'is_last_payment' => $isLastPayment
         ]);
     }
 

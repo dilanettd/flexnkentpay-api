@@ -99,6 +99,74 @@ class OrderController extends Controller
         ]);
     }
 
+
+    /**
+     * Récupère toutes les commandes avec pagination et recherche.
+     *
+     * @param Request $request
+     * @return \Illuminate\Http\JsonResponse
+     */
+    public function getAllOrders(Request $request)
+    {
+        if (!Auth::user()->isAdmin()) {
+            return response()->json(['message' => 'Accès non autorisé'], 403);
+        }
+
+        $query = Order::query();
+
+        if ($request->has('keyword') && !empty($request->keyword)) {
+            $keyword = $request->keyword;
+            $query->where(function ($q) use ($keyword) {
+                $q->whereHas('user', function ($query) use ($keyword) {
+                    $query->where('name', 'like', "%{$keyword}%")
+                        ->orWhere('email', 'like', "%{$keyword}%");
+                })
+                    ->orWhereHas('product', function ($query) use ($keyword) {
+                        $query->where('name', 'like', "%{$keyword}%");
+                    })
+                    ->orWhere('id', 'like', "%{$keyword}%");
+            });
+        }
+
+        if ($request->has('status')) {
+            if ($request->status === 'completed') {
+                $query->where('is_completed', true);
+            } elseif ($request->status === 'confirmed') {
+                $query->where('is_confirmed', true)
+                    ->where('is_completed', false);
+            } elseif ($request->status === 'pending') {
+                $query->where('is_confirmed', false);
+            }
+        }
+
+        if ($request->has('date_from') && !empty($request->date_from)) {
+            $query->whereDate('created_at', '>=', $request->date_from);
+        }
+
+        if ($request->has('date_to') && !empty($request->date_to)) {
+            $query->whereDate('created_at', '<=', $request->date_to);
+        }
+
+        if ($request->has('min_amount') && is_numeric($request->min_amount)) {
+            $query->where('total_cost', '>=', $request->min_amount);
+        }
+
+        if ($request->has('max_amount') && is_numeric($request->max_amount)) {
+            $query->where('total_cost', '<=', $request->max_amount);
+        }
+
+        $sortField = $request->sort_field ?? 'created_at';
+        $sortDirection = $request->sort_direction ?? 'desc';
+        $query->orderBy($sortField, $sortDirection);
+
+        $perPage = $request->per_page ?? 15;
+        $orders = $query->with(['user', 'product', 'seller.user', 'seller.shop', 'orderPayments'])
+            ->paginate($perPage);
+
+        return response()->json($orders);
+    }
+
+
     /**
      * Retry payment to confirm a pending order
      */

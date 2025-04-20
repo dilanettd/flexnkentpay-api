@@ -6,11 +6,10 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Password;
-use Illuminate\Support\Facades\Mail;
-use App\Mail\AccountConfirmation;
 use Illuminate\Support\Str;
 use Illuminate\Support\Facades\DB;
-use App\Mail\ResetPassword;
+use App\Events\UserRegistered;
+use App\Events\PasswordResetRequested;
 use Carbon\Carbon;
 use App\Models\User;
 use App\Models\Admin;
@@ -46,7 +45,7 @@ class AuthController extends Controller
 
         $frontendUrl = getenv('FRONT_END_URL') . "/account/verify?token=" . urlencode($verificationToken);
 
-        Mail::to($user->email)->send(new AccountConfirmation($user->name, $frontendUrl));
+        event(new UserRegistered($user, $frontendUrl));
 
         return response()->json($user, 200);
     }
@@ -123,7 +122,7 @@ class AuthController extends Controller
 
         $resetUrl = getenv('FRONT_END_URL') . '/change-password?token=' . $token . '&email=' . urlencode($user->email);
 
-        Mail::to($user->email)->send(new ResetPassword($user->name, $resetUrl));
+        event(new PasswordResetRequested($user, $resetUrl));
 
         return response()->json(['message' => 'Reset password email sent.']);
     }

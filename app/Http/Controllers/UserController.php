@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
+use App\Models\User;
 
 class UserController extends Controller
 {
@@ -21,6 +22,33 @@ class UserController extends Controller
         $user->update($updates);
 
         return response()->json($user);
+    }
+
+    public function updateStatus(Request $request, string $id)
+    {
+        if (!Auth::user()->isAdmin()) {
+            return response()->json(['message' => 'Accès non autorisé'], 403);
+        }
+
+        $request->validate([
+            'is_active' => 'required|boolean',
+        ]);
+
+        $user = User::findOrFail($id);
+
+        if ($user->id === Auth::id()) {
+            return response()->json(['message' => 'Vous ne pouvez pas désactiver votre propre compte'], 400);
+        }
+
+        $user->is_active = $request->is_active;
+        $user->save();
+
+        $statusMessage = $request->is_active ? 'activated' : 'deactivated';
+
+        return response()->json([
+            'message' => "Le compte de l'utilisateur a été $statusMessage avec succès.",
+            'user' => $user
+        ]);
     }
 
 
@@ -81,5 +109,48 @@ class UserController extends Controller
         $user->save();
 
         return response()->json($user);
+    }
+
+    /**
+     * Récupère tous les utilisateurs avec pagination et recherche.
+     *
+     * @param Request $request
+     * @return \Illuminate\Http\JsonResponse
+     */
+    public function getAllUsers(Request $request)
+    {
+        if (!Auth::user()->isAdmin()) {
+            return response()->json(['message' => 'Accès non autorisé'], 403);
+        }
+
+        $query = User::query();
+
+        if ($request->has('keyword') && !empty($request->keyword)) {
+            $keyword = $request->keyword;
+            $query->where(function ($q) use ($keyword) {
+                $q->where('name', 'like', "%{$keyword}%")
+                    ->orWhere('email', 'like', "%{$keyword}%")
+                    ->orWhere('phone', 'like', "%{$keyword}%")
+                    ->orWhere('role', 'like', "%{$keyword}%");
+            });
+        }
+
+        if ($request->has('role') && !empty($request->role)) {
+            $query->where('role', $request->role);
+        }
+
+        if ($request->has('is_active') && $request->is_active !== null) {
+            $isActive = filter_var($request->is_active, FILTER_VALIDATE_BOOLEAN);
+            $query->where('is_active', $isActive);
+        }
+
+        $sortField = $request->sort_field ?? 'created_at';
+        $sortDirection = $request->sort_direction ?? 'desc';
+        $query->orderBy($sortField, $sortDirection);
+
+        $perPage = $request->per_page ?? 15;
+        $users = $query->paginate($perPage);
+
+        return response()->json($users);
     }
 }

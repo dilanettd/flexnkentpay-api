@@ -93,8 +93,6 @@ class ProductController extends Controller
 
                     $product->images()->create([
                         'image_url' => $imageUrl,
-                        'width' => getimagesize($imageFile->getPathname())[0],
-                        'height' => getimagesize($imageFile->getPathname())[1],
                     ]);
                 }
             }
@@ -171,8 +169,6 @@ class ProductController extends Controller
 
                     $product->images()->create([
                         'image_url' => $imageUrl,
-                        'width' => getimagesize($imageFile->getPathname())[0],
-                        'height' => getimagesize($imageFile->getPathname())[1],
                     ]);
                 }
             }
@@ -403,8 +399,6 @@ class ProductController extends Controller
 
         $image = $product->images()->create([
             'image_url' => $imageUrl,
-            'width' => getimagesize($request->file('image')->getPathname())[0],
-            'height' => getimagesize($request->file('image')->getPathname())[1],
         ]);
 
         return response()->json([

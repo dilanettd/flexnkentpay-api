@@ -71,4 +71,74 @@ class MomoTransactionController extends Controller
 
         return $transactions;
     }
+
+    /**
+     * Récupère toutes les transactions avec pagination et recherche pour l'administration.
+     *
+     * @param Request $request
+     * @return \Illuminate\Http\JsonResponse
+     */
+    public function getAllTransactions(Request $request)
+    {
+        // Vérifier que l'utilisateur est un admin
+        if (!Auth::user()->isAdmin()) {
+            return response()->json(['message' => 'Accès non autorisé'], 403);
+        }
+
+        $query = MomoTransaction::query();
+
+        // Recherche par mot-clé
+        if ($request->has('keyword') && !empty($request->keyword)) {
+            $keyword = $request->keyword;
+            $query->where(function ($q) use ($keyword) {
+                $q->where('transaction_id', 'like', "%{$keyword}%")
+                    ->orWhere('provider_transaction_id', 'like', "%{$keyword}%")
+                    ->orWhere('phone_number', 'like', "%{$keyword}%")
+                    ->orWhereHas('user', function ($query) use ($keyword) {
+                        $query->where('name', 'like', "%{$keyword}%")
+                            ->orWhere('email', 'like', "%{$keyword}%");
+                    });
+            });
+        }
+
+        // Filtrage par statut
+        if ($request->has('status') && !empty($request->status)) {
+            $query->where('status', $request->status);
+        }
+
+        // Filtrage par type de fournisseur
+        if ($request->has('provider_type') && !empty($request->provider_type)) {
+            $query->where('provider_type', $request->provider_type);
+        }
+
+        // Filtrage par montant
+        if ($request->has('min_amount') && is_numeric($request->min_amount)) {
+            $query->where('amount', '>=', $request->min_amount);
+        }
+
+        if ($request->has('max_amount') && is_numeric($request->max_amount)) {
+            $query->where('amount', '<=', $request->max_amount);
+        }
+
+        // Filtrage par date
+        if ($request->has('date_from') && !empty($request->date_from)) {
+            $query->whereDate('created_at', '>=', $request->date_from);
+        }
+
+        if ($request->has('date_to') && !empty($request->date_to)) {
+            $query->whereDate('created_at', '<=', $request->date_to);
+        }
+
+        // Tri
+        $sortField = $request->sort_field ?? 'created_at';
+        $sortDirection = $request->sort_direction ?? 'desc';
+        $query->orderBy($sortField, $sortDirection);
+
+        // Pagination
+        $perPage = $request->per_page ?? 15;
+        $transactions = $query->with(['user', 'payment.order.product'])
+            ->paginate($perPage);
+
+        return response()->json($transactions);
+    }
 }
