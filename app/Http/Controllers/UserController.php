@@ -3,7 +3,6 @@
 namespace App\Http\Controllers;
 
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Auth;
 
 class UserController extends Controller
@@ -34,19 +33,34 @@ class UserController extends Controller
         ]);
 
         if ($request->hasFile('profilePic')) {
+            // Delete old profile picture if exists
             if ($user->profile_url) {
-                $urlParts = explode('/', $user->profile_url);
-                $filename = end($urlParts);
-                Storage::disk('s3')->delete('images/profiles/' . $filename);
+                // Get image path relative to the public directory
+                $path = str_replace(url('/'), '', $user->profile_url);
+                $path = ltrim($path, '/');
+
+                // Delete from public storage if file exists
+                if (file_exists(public_path($path))) {
+                    unlink(public_path($path));
+                }
             }
 
-            $image = $request->file('profilePic');
-            $extension = $image->getClientOriginalExtension();
-            $imageName = 'images/profiles/' . uniqid() . "." . $extension;
-            Storage::disk('s3')->put($imageName, file_get_contents($image));
+            // Destination path within public directory
+            $destinationPath = 'uploads/users/profiles';
 
-            $user->profile_url = Storage::disk('s3')->url($imageName);
-            Storage::disk('s3')->setVisibility($user->profile_url, 'public');
+            // Create directory if it doesn't exist
+            if (!file_exists(public_path($destinationPath))) {
+                mkdir(public_path($destinationPath), 0755, true);
+            }
+
+            // Generate a unique filename
+            $fileName = uniqid() . '_' . time() . '.' . $request->file('profilePic')->getClientOriginalExtension();
+
+            // Move the uploaded file to the public directory
+            $request->file('profilePic')->move(public_path($destinationPath), $fileName);
+
+            // Generate the URL for direct access
+            $user->profile_url = url($destinationPath . '/' . $fileName);
             $user->save();
 
             return response()->json($user);
@@ -69,4 +83,3 @@ class UserController extends Controller
         return response()->json($user);
     }
 }
-

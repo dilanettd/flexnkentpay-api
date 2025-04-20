@@ -32,7 +32,7 @@ class PawaPayController extends Controller
     }
 
     /**
-     * Initie un paiement via PawaPay.
+     * Initiates a payment via PawaPay.
      *
      * @param Request $request
      * @return \Illuminate\Http\JsonResponse
@@ -53,7 +53,6 @@ class PawaPayController extends Controller
             ], 400);
         }
 
-        // Vérifier si c'est le premier paiement mais que la commande est déjà confirmée
         $order = $orderPayment->order;
         if ($orderPayment->installment_number == 1 && $order->is_confirmed) {
             return response()->json([
@@ -61,21 +60,17 @@ class PawaPayController extends Controller
             ], 400);
         }
 
-        // Calculer les frais de pénalité si le paiement est en retard
         $orderPayment->calculatePenaltyFees();
 
-        // Montant total à payer (versement + pénalités)
         $amount = $orderPayment->amount_paid + $orderPayment->penalty_fees;
         $fees = 0;
 
-        // Générer un ID de transaction unique
-        $transactionId = 'momo_' . Str::uuid();
+        $transactionId = (string) Str::uuid();
 
-        // Créer la transaction MoMo
         $transaction = MomoTransaction::create([
             'user_id' => $user->id,
             'transaction_id' => $transactionId,
-            'provider_transaction_id' => null, // Sera mis à jour après la réponse de PawaPay
+            'provider_transaction_id' => null,
             'phone_number' => $request->phone_number,
             'amount' => $amount,
             'fees' => $fees,
@@ -83,12 +78,10 @@ class PawaPayController extends Controller
             'provider_type' => PawaPay::PROVIDER_TYPE,
         ]);
 
-        // Lier la transaction au paiement de la commande
         $orderPayment->momo_transaction_id = $transaction->id;
         $orderPayment->save();
 
         try {
-            // Préparer les métadonnées pour PawaPay
             $metadata = [
                 'user_id' => $user->id,
                 'order_payment_id' => $orderPayment->id,
@@ -97,10 +90,8 @@ class PawaPayController extends Controller
                 'penalty_fees' => $orderPayment->penalty_fees
             ];
 
-            // Description pour l'état de la transaction
-            $description = 'Paiement commande #' . $orderPayment->order_id . ' (Versement ' . $orderPayment->installment_number . '/' . $order->installment_count . ')';
+            $description = 'Paiement commande #' . $orderPayment->order_id . $transactionId . ' (Versement ' . $orderPayment->installment_number . '/' . $order->installment_count . ')';
 
-            // Appel au modèle PawaPay pour initier le dépôt
             $pawaPayResponse = $this->pawaPayModel->deposit(
                 $request->phone_number,
                 $amount,
@@ -112,26 +103,19 @@ class PawaPayController extends Controller
             if ($pawaPayResponse['success']) {
                 $responseData = $pawaPayResponse['data'];
 
-                // Mettre à jour la transaction avec l'ID PawaPay si disponible
                 if (isset($responseData['depositId'])) {
                     $transaction->provider_transaction_id = $responseData['depositId'];
                 }
 
-                // Mettre à jour le statut si disponible
                 if (isset($responseData['status']) && $responseData['status'] === PawaPay::STATUS_ACCEPTED) {
-                    $transaction->status = PawaPay::STATUS_ACCEPTED;
+                    $transaction->status = 'success';
+                    $orderPayment->markAsPaid($transaction->id);
                 }
 
                 $transaction->save();
 
-                // Préparer un message spécifique pour le premier paiement
-                $message = $orderPayment->installment_number == 1
-                    ? 'Paiement initié avec succès. Veuillez confirmer sur votre téléphone pour valider votre commande.'
-                    : 'Paiement initié avec succès. Veuillez confirmer sur votre téléphone.';
-
                 return response()->json([
                     'status' => 'success',
-                    'message' => $message,
                     'transaction' => $transaction,
                     'payment_info' => [
                         'order_id' => $order->id,
@@ -140,11 +124,10 @@ class PawaPayController extends Controller
                         'amount' => $orderPayment->amount_paid,
                         'penalty_fees' => $orderPayment->penalty_fees,
                         'total_amount' => $amount,
-                        'is_first_payment' => $orderPayment->installment_number == 1
+
                     ]
                 ]);
             } else {
-                // En cas d'erreur générique
                 $transaction->status = PawaPay::STATUS_FAILED;
                 $transaction->save();
 
@@ -156,14 +139,12 @@ class PawaPayController extends Controller
                 ], 400);
             }
         } catch (\Exception $e) {
-            // Log l'erreur
             Log::error('Exception lors de l\'appel à l\'API PawaPay', [
                 'error' => $e->getMessage(),
                 'transaction_id' => $transactionId,
                 'trace' => $e->getTraceAsString()
             ]);
 
-            // Mettre à jour le statut de la transaction
             $transaction->status = PawaPay::STATUS_FAILED;
             $transaction->save();
 
@@ -175,7 +156,7 @@ class PawaPayController extends Controller
     }
 
     /**
-     * Récupère les transactions PawaPay de l'utilisateur connecté.
+     * Retrieves PawaPay transactions for the connected user.
      *
      * @return \Illuminate\Http\JsonResponse
      */
@@ -192,7 +173,7 @@ class PawaPayController extends Controller
     }
 
     /**
-     * Vérifie le statut d'une transaction de dépôt existante.
+     * Checks the status of an existing deposit transaction.
      *
      * @param string $providerTransactionId
      * @return \Illuminate\Http\JsonResponse
@@ -216,12 +197,10 @@ class PawaPayController extends Controller
             if ($statusResponse['success']) {
                 $responseData = $statusResponse['data'];
 
-                // Mettre à jour le statut de la transaction dans notre base de données
                 if (isset($responseData['status'])) {
                     $transaction->status = strtolower($responseData['status']);
                     $transaction->save();
 
-                    // Si la transaction est complétée, mettre à jour le paiement associé
                     if ($transaction->status === PawaPay::STATUS_COMPLETED) {
                         $orderPayment = OrderPayment::where('momo_transaction_id', $transaction->id)->first();
 
@@ -260,7 +239,7 @@ class PawaPayController extends Controller
     }
 
     /**
-     * Endpoint pour recevoir les webhooks de PawaPay.
+     * Endpoint to receive PawaPay webhooks.
      * 
      * @param Request $request
      * @param string $eventType
@@ -274,7 +253,6 @@ class PawaPayController extends Controller
 
         $data = $request->all();
 
-        // Vérifier la signature du webhook (pour la sécurité en production)
         if (!$this->verifyWebhookSignature($request)) {
             Log::error("[PawaPay handleWebhook] Invalid webhook signature", [
                 'event_type' => $eventType
@@ -282,7 +260,6 @@ class PawaPayController extends Controller
             return response()->json(['message' => 'Invalid signature'], 401);
         }
 
-        // Validation du eventType
         $validEventTypes = [PawaPay::TYPE_DEPOSIT, PawaPay::TYPE_PAYOUT, PawaPay::TYPE_REFUND];
         if (!in_array(strtolower($eventType), $validEventTypes)) {
             Log::error("[PawaPay handleWebhook] Unknown event type {$eventType}", [
@@ -291,7 +268,6 @@ class PawaPayController extends Controller
             return response()->json(['message' => 'Invalid event type'], 400);
         }
 
-        // Déléguer le traitement au processeur de webhook
         $result = $this->processWebhookData(strtolower($eventType), $data);
 
         if (isset($result['error'])) {
@@ -302,7 +278,7 @@ class PawaPayController extends Controller
     }
 
     /**
-     * Vérifie la signature du webhook pour la sécurité.
+     * Verifies the webhook signature for security.
      *
      * @param Request $request
      * @return bool
@@ -311,7 +287,6 @@ class PawaPayController extends Controller
     {
         $webhookSecret = config('services.pawapay.webhook_secret');
 
-        // Si aucun secret n'est configuré, on considère que la vérification est désactivée
         if (empty($webhookSecret)) {
             return true;
         }
@@ -324,14 +299,13 @@ class PawaPayController extends Controller
             return false;
         }
 
-        // Vérifier que le timestamp n'est pas trop ancien (optionnel, pour éviter les attaques par rejeu)
         if (!empty($timestamp)) {
             $timestampDate = \DateTime::createFromFormat('c', $timestamp);
             if ($timestampDate) {
                 $now = new \DateTime();
                 $diff = $now->getTimestamp() - $timestampDate->getTimestamp();
 
-                if ($diff > 300) { // 5 minutes
+                if ($diff > 300) {
                     Log::warning('Timestamp de webhook trop ancien', [
                         'timestamp' => $timestamp,
                         'diff' => $diff
@@ -341,10 +315,8 @@ class PawaPayController extends Controller
             }
         }
 
-        // Contenu du webhook
         $payload = $request->getContent();
 
-        // Utiliser le service de signature pour vérifier le webhook
         return $this->signatureService->verifyIncomingSignature(
             $payload,
             $signature,
@@ -355,7 +327,7 @@ class PawaPayController extends Controller
     }
 
     /**
-     * Traite les données du webhook PawaPay.
+     * Processes PawaPay webhook data.
      *
      * @param string $eventType
      * @param array $data
@@ -399,7 +371,6 @@ class PawaPayController extends Controller
         }
 
         try {
-            // Enregistrer le webhook
             $webhook = PawaPayWebhook::create([
                 'transaction_id' => $providerTransactionId,
                 'transaction_type' => $eventType,
@@ -419,7 +390,6 @@ class PawaPayController extends Controller
                 'suspicious_activity_report' => $suspiciousActivityReport ? json_encode($suspiciousActivityReport) : null,
             ]);
 
-            // Rechercher la transaction correspondante
             $momoTransaction = MomoTransaction::where('provider_transaction_id', $providerTransactionId)
                 ->where('provider_type', PawaPay::PROVIDER_TYPE)
                 ->first();
@@ -439,30 +409,24 @@ class PawaPayController extends Controller
                 return ['message' => 'Duplicate transaction ignored'];
             }
 
-            // Si le statut est passé à FAILED ou REJECTED, et qu'il s'agit du premier paiement
-            // pour une commande non confirmée, supprimer la commande
             if (in_array($status, [PawaPay::STATUS_FAILED, PawaPay::STATUS_REJECTED])) {
-                // Vérifier si c'est le premier paiement d'une commande non confirmée
                 $orderPayment = OrderPayment::where('momo_transaction_id', $momoTransaction->id)->first();
 
                 if ($orderPayment && $orderPayment->installment_number == 1) {
                     $order = $orderPayment->order;
 
                     if (!$order->is_confirmed) {
-                        // Si la commande n'est pas confirmée et que le premier paiement a échoué, supprimer
                         Log::info("[PawaPay processWebhookData] Suppression de la commande non confirmée", [
                             'order_id' => $order->id,
                             'status' => $status
                         ]);
 
-                        // Enregistrer la suppression dans les logs
                         $order->orderPayments()->delete();
                         $order->delete();
                     }
                 }
             }
 
-            // Si le statut est passé à COMPLETED
             if (
                 $status == PawaPay::STATUS_COMPLETED &&
                 ($currentStatus == PawaPay::STATUS_PENDING || $currentStatus == PawaPay::STATUS_ACCEPTED)
@@ -470,8 +434,16 @@ class PawaPayController extends Controller
                 $this->handleSuccessfulTransaction($momoTransaction, $amount);
             }
 
-            // Mettre à jour le statut de la transaction
-            $momoTransaction->status = $status;
+            if (
+                $status == PawaPay::STATUS_ACCEPTED
+            ) {
+                $momoTransaction->status = "success";
+                $momoTransaction->save();
+            } else {
+
+                $momoTransaction->status = $status;
+            }
+
             $momoTransaction->updated_at = now();
             $momoTransaction->save();
 
@@ -480,7 +452,6 @@ class PawaPayController extends Controller
                 'status' => $status
             ]);
 
-            // Envoyer notification
             $this->sendTransactionNotification($momoTransaction, $status);
 
             return ['message' => 'Webhook processed successfully'];
@@ -495,7 +466,7 @@ class PawaPayController extends Controller
     }
 
     /**
-     * Gère une transaction réussie.
+     * Handles a successful transaction.
      *
      * @param MomoTransaction $momoTransaction
      * @param float $amount
@@ -503,7 +474,6 @@ class PawaPayController extends Controller
      */
     private function handleSuccessfulTransaction(MomoTransaction $momoTransaction, float $amount): void
     {
-        // Mettre à jour le statut du paiement de la commande
         $orderPayment = OrderPayment::where('momo_transaction_id', $momoTransaction->id)->first();
 
         if ($orderPayment) {
@@ -511,12 +481,10 @@ class PawaPayController extends Controller
             $orderPayment->payment_date = now();
             $orderPayment->save();
 
-            // Mettre à jour le statut de la commande
             $order = $orderPayment->order;
             $order->remaining_amount -= $orderPayment->amount_paid;
             $order->remaining_installments -= 1;
 
-            // Vérifier si c'est le premier paiement (installment_number = 1)
             if ($orderPayment->installment_number == 1) {
                 $order->is_confirmed = true;
 
@@ -532,7 +500,6 @@ class PawaPayController extends Controller
 
             $order->save();
 
-            // Enregistrer l'utilisation du fournisseur (montant déjà au bon format)
             ProviderUsage::updateDepositUsage('pawapay', $amount);
 
             Log::info("[PawaPay handleSuccessfulTransaction] Order payment updated", [
@@ -546,7 +513,7 @@ class PawaPayController extends Controller
     }
 
     /**
-     * Met à jour le paiement de commande quand une transaction est réussie.
+     * Updates order payment when a transaction is successful.
      *
      * @param OrderPayment $orderPayment
      * @param MomoTransaction $transaction
@@ -580,7 +547,7 @@ class PawaPayController extends Controller
     }
 
     /**
-     * Envoie une notification concernant la transaction.
+     * Sends a notification about the transaction.
      *
      * @param MomoTransaction $momoTransaction
      * @param string $status
@@ -588,17 +555,10 @@ class PawaPayController extends Controller
      */
     private function sendTransactionNotification(MomoTransaction $momoTransaction, string $status): void
     {
-        // À implémenter selon votre système de notification
-        // Vous pourriez envoyer un e-mail, un SMS, ou une notification push
-
         try {
             $user = User::find($momoTransaction->user_id);
 
             if ($user) {
-                // Si vous avez configuré le système de notifications Laravel
-                // $user->notify(new PaymentStatusNotification($momoTransaction, $status));
-
-                // Pour l'instant, simplement logger
                 Log::info("[PawaPay sendTransactionNotification] Notification envoyée", [
                     'user_id' => $momoTransaction->user_id,
                     'transaction_id' => $momoTransaction->transaction_id,

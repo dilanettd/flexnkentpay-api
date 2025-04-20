@@ -31,7 +31,6 @@ return [
         'region' => env('AWS_DEFAULT_REGION', 'us-east-1'),
     ],
     'pawapay' => [
-        'api_key' => env('PAWAPAY_API_KEY', ''),
         'api_token' => env('PAWAPAY_API_TOKEN', ''),
         'base_url' => env('PAWAPAY_BASE_URL', 'https://api.sandbox.pawapay.io'),
         'webhook_secret' => env('PAWAPAY_WEBHOOK_SECRET', ''),

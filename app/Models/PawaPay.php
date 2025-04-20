@@ -3,12 +3,13 @@
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
-use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
-use App\Services\PawaPaySignatureService;
+use App\Services\PawaPayApiService;
+use App\Services\PawaPayFormatterService;
 
 class PawaPay extends Model
 {
+    // Constants de statut
     const STATUS_PENDING = 'pending';
     const STATUS_ACCEPTED = 'accepted';
     const STATUS_SUBMITTED = 'submitted';
@@ -17,25 +18,33 @@ class PawaPay extends Model
     const STATUS_REJECTED = 'rejected';
     const STATUS_DUPLICATE_IGNORED = 'duplicate_ignored';
 
+    // Constants de type de transaction
     const TYPE_DEPOSIT = 'deposit';
     const TYPE_PAYOUT = 'payout';
     const TYPE_REFUND = 'refund';
 
+    // Correspondants (maintenant utilisées depuis le FormatterService)
     const CORRESPONDENT_MTN_CMR = 'MTN_MOMO_CMR';
     const CORRESPONDENT_ORANGE_CMR = 'ORANGE_CMR';
 
     const PROVIDER_TYPE = 'pawapay';
 
-    protected $signatureService;
-    protected $baseUrl;
+    protected $apiService;
+    protected $formatterService;
 
+    /**
+     * Constructeur avec injection des services
+     */
     public function __construct(array $attributes = [])
     {
         parent::__construct($attributes);
-        $this->signatureService = new PawaPaySignatureService();
-        $this->baseUrl = config('services.pawapay.base_url', 'https://api.sandbox.pawapay.io');
+        $this->apiService = new PawaPayApiService();
+        $this->formatterService = new PawaPayFormatterService();
     }
 
+    /**
+     * Initie un dépôt via PawaPay
+     */
     public function deposit(
         string $phoneNumber,
         float $amount,
@@ -47,22 +56,13 @@ class PawaPay extends Model
         ?string $correspondent = null
     ) {
         try {
-            $phoneResult = $this->formatPhoneNumber($phoneNumber);
+            $phoneResult = $this->formatterService->formatPhoneNumber($phoneNumber);
             $formattedPhoneNumber = $phoneResult['phoneNumber'];
             $detectedCorrespondent = $phoneResult['correspondent'];
 
             $useCorrespondent = $correspondent ?: $detectedCorrespondent;
-
-            $formattedAmount = $this->formatAmount($amount);
-
-            $formattedMetadata = [];
-            foreach ($metadata as $key => $value) {
-                $formattedMetadata[] = [
-                    'fieldName' => $key,
-                    'fieldValue' => (string) $value,
-                    'isPII' => false
-                ];
-            }
+            $formattedAmount = $this->formatterService->formatAmount($amount);
+            $formattedMetadata = $this->formatterService->formatMetadata($metadata);
 
             $payload = [
                 'depositId' => $transactionId,
@@ -77,7 +77,7 @@ class PawaPay extends Model
                     ]
                 ],
                 'customerTimestamp' => now()->toIso8601String(),
-                'statementDescription' => $description ?: "Payment #" . substr($transactionId, -8),
+                'statementDescription' => "Payment " . substr($transactionId, -8),
             ];
 
             if (!empty($formattedMetadata)) {
@@ -91,7 +91,7 @@ class PawaPay extends Model
                 'correspondent' => $useCorrespondent
             ]);
 
-            $response = $this->callPawaPayApi('deposits', $payload);
+            $response = $this->apiService->sendRequest('deposits', $payload);
 
             if ($response['success']) {
                 $responseData = $response['data'];
@@ -125,10 +125,13 @@ class PawaPay extends Model
         }
     }
 
+    /**
+     * Vérifie le statut d'un dépôt
+     */
     public function checkDepositStatus(string $depositId)
     {
         try {
-            $response = $this->callPawaPayApi("deposits/{$depositId}", [], 'GET');
+            $response = $this->apiService->sendRequest("deposits/{$depositId}", [], 'GET');
 
             if ($response['success']) {
                 $responseData = $response['data'];
@@ -191,6 +194,9 @@ class PawaPay extends Model
         }
     }
 
+    /**
+     * Initie un paiement via PawaPay
+     */
     public function payout(
         string $phoneNumber,
         float $amount,
@@ -202,22 +208,13 @@ class PawaPay extends Model
         ?string $correspondent = null
     ) {
         try {
-            $phoneResult = $this->formatPhoneNumber($phoneNumber);
+            $phoneResult = $this->formatterService->formatPhoneNumber($phoneNumber);
             $formattedPhoneNumber = $phoneResult['phoneNumber'];
             $detectedCorrespondent = $phoneResult['correspondent'];
 
             $useCorrespondent = $correspondent ?: $detectedCorrespondent;
-
-            $formattedAmount = $this->formatAmount($amount);
-
-            $formattedMetadata = [];
-            foreach ($metadata as $key => $value) {
-                $formattedMetadata[] = [
-                    'fieldName' => $key,
-                    'fieldValue' => (string) $value,
-                    'isPII' => false
-                ];
-            }
+            $formattedAmount = $this->formatterService->formatAmount($amount);
+            $formattedMetadata = $this->formatterService->formatMetadata($metadata);
 
             $payload = [
                 'payoutId' => $transactionId,
@@ -246,7 +243,7 @@ class PawaPay extends Model
                 'correspondent' => $useCorrespondent
             ]);
 
-            $response = $this->callPawaPayApi('payouts', $payload);
+            $response = $this->apiService->sendRequest('payouts', $payload);
 
             if ($response['success']) {
                 $responseData = $response['data'];
@@ -280,10 +277,13 @@ class PawaPay extends Model
         }
     }
 
+    /**
+     * Vérifie le statut d'un paiement
+     */
     public function checkPayoutStatus(string $payoutId)
     {
         try {
-            $response = $this->callPawaPayApi("payouts/{$payoutId}", [], 'GET');
+            $response = $this->apiService->sendRequest("payouts/{$payoutId}", [], 'GET');
 
             if ($response['success']) {
                 $responseData = $response['data'];
@@ -326,19 +326,14 @@ class PawaPay extends Model
         }
     }
 
+    /**
+     * Initie un remboursement via PawaPay
+     */
     public function refund(string $depositId, float $amount, string $transactionId, array $metadata = [], string $reason = '')
     {
         try {
-            $formattedAmount = $this->formatAmount($amount);
-
-            $formattedMetadata = [];
-            foreach ($metadata as $key => $value) {
-                $formattedMetadata[] = [
-                    'fieldName' => $key,
-                    'fieldValue' => (string) $value,
-                    'isPII' => false
-                ];
-            }
+            $formattedAmount = $this->formatterService->formatAmount($amount);
+            $formattedMetadata = $this->formatterService->formatMetadata($metadata);
 
             $payload = [
                 'refundId' => $transactionId,
@@ -357,7 +352,7 @@ class PawaPay extends Model
                 'amount' => $formattedAmount
             ]);
 
-            $response = $this->callPawaPayApi('refunds', $payload);
+            $response = $this->apiService->sendRequest('refunds', $payload);
 
             if ($response['success']) {
                 $responseData = $response['data'];
@@ -392,10 +387,13 @@ class PawaPay extends Model
         }
     }
 
+    /**
+     * Vérifie le statut d'un remboursement
+     */
     public function checkRefundStatus(string $refundId)
     {
         try {
-            $response = $this->callPawaPayApi("refunds/{$refundId}", [], 'GET');
+            $response = $this->apiService->sendRequest("refunds/{$refundId}", [], 'GET');
 
             if ($response['success']) {
                 $responseData = $response['data'];
@@ -436,94 +434,5 @@ class PawaPay extends Model
                 'message' => 'System error: ' . $e->getMessage()
             ];
         }
-    }
-
-    protected function formatPhoneNumber(string $phoneNumber)
-    {
-        $phoneNumber = preg_replace('/[\s\-\(\)]/', '', $phoneNumber);
-        $phoneNumber = ltrim($phoneNumber, '+');
-
-        if (preg_match('/^6\d{8}$/', $phoneNumber)) {
-            $phoneNumber = '237' . $phoneNumber;
-        }
-
-        $correspondent = null;
-
-        $mtnPrefixes = [
-            '23767',
-            '237680',
-            '237681',
-            '237682',
-            '237683',
-            '237684',
-            '237650',
-            '237651',
-            '237652',
-            '237653',
-            '237654'
-        ];
-
-        $orangePrefixes = [
-            '23769',
-            '237655',
-            '237656',
-            '237657',
-            '237658',
-            '237659',
-            '237685',
-            '237686',
-            '237687',
-            '237688',
-            '237689',
-            '237640'
-        ];
-
-        foreach ($mtnPrefixes as $prefix) {
-            if (strpos($phoneNumber, $prefix) === 0) {
-                $correspondent = self::CORRESPONDENT_MTN_CMR;
-                break;
-            }
-        }
-
-        if (!$correspondent) {
-            foreach ($orangePrefixes as $prefix) {
-                if (strpos($phoneNumber, $prefix) === 0) {
-                    $correspondent = self::CORRESPONDENT_ORANGE_CMR;
-                    break;
-                }
-            }
-        }
-
-        if (!$correspondent && strlen($phoneNumber) >= 4) {
-            $firstDigit = substr($phoneNumber, 3, 1);
-            if ($firstDigit === '6') {
-                $correspondent = self::CORRESPONDENT_MTN_CMR;
-            } else if ($firstDigit === '9') {
-                $correspondent = self::CORRESPONDENT_ORANGE_CMR;
-            }
-        }
-
-        if (!$correspondent) {
-            $correspondent = self::CORRESPONDENT_MTN_CMR;
-        }
-
-        return [
-            'phoneNumber' => $phoneNumber,
-            'correspondent' => $correspondent
-        ];
-    }
-
-    protected function formatAmount(float $amount)
-    {
-        if (floor($amount) == $amount) {
-            return (string) intval($amount);
-        }
-
-        return number_format($amount, 0, '', '');
-    }
-
-    protected function callPawaPayApi($endpoint, array $data = [], string $method = 'POST')
-    {
-        return $this->signatureService->signAndSendRequest($endpoint, $data, $method);
     }
 }

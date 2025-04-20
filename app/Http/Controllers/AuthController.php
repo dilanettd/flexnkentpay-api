@@ -14,6 +14,7 @@ use App\Mail\ResetPassword;
 use Carbon\Carbon;
 use App\Models\User;
 use App\Models\Admin;
+use App\Models\Preference;
 
 class AuthController extends Controller
 {
@@ -23,6 +24,7 @@ class AuthController extends Controller
             'name' => 'required|string|max:255',
             'email' => 'required|string|email|max:255|unique:users',
             'password' => 'required|string|min:8',
+            'language' => 'required|string|in:en,fr',
         ]);
 
         $user = User::create([
@@ -35,6 +37,12 @@ class AuthController extends Controller
         $user->email_verification_token = Hash::make($verificationToken);
         $user->email_verification_token_expires_at = Carbon::now()->addMinutes(120);
         $user->save();
+
+        // Create default user preferences
+        Preference::create([
+            'user_id' => $user->id,
+            'language' => $request->language ?? 'fr',
+        ]);
 
         $frontendUrl = getenv('FRONT_END_URL') . "/account/verify?token=" . urlencode($verificationToken);
 

@@ -1,6 +1,5 @@
 <?php
 
-use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
 
 use App\Http\Controllers\AuthController;
@@ -16,7 +15,7 @@ use App\Http\Controllers\ProductReviewController;
 use App\Http\Controllers\MomoTransactionController;
 use App\Http\Controllers\DashboardController;
 use App\Http\Controllers\PawaPayController;
-use App\Http\Controllers\PawaPayTransactionController;
+use App\Http\Controllers\CategoryController;
 use App\Http\Controllers\OrderPaymentController;
 use App\Http\Controllers\FeeController;
 
@@ -163,11 +162,21 @@ Route::middleware('auth:api')->group(function () {
 
 // Routes pour la gestion des frais (Fees)
 Route::middleware(['auth:api'])->group(function () {
-    Route::get('/fees/{name}', [FeeController::class, 'show']);
+    Route::get('/fees/{type}', [FeeController::class, 'show']);
     Route::get('/fees', [FeeController::class, 'index']);
     Route::post('/fees', [FeeController::class, 'store']);
-    Route::put('/fees/{id}', [FeeController::class, 'update']);
-    Route::delete('/fees/{id}', [FeeController::class, 'destroy']);
-    Route::put('/fees/{id}/activate', [FeeController::class, 'activate']);
+    Route::put('/fees/{type}', [FeeController::class, 'update']);
+    Route::delete('/fees/{type}', [FeeController::class, 'destroy']);
+    Route::put('/fees/{type}/activate', [FeeController::class, 'activate']);
     Route::get('/fees/active', [FeeController::class, 'getActiveFees']);
+});
+
+
+// Routes pour la gestion des frais (Fees)
+Route::get('/categories', [CategoryController::class, 'index']);
+Route::get('/categories/{id}', [CategoryController::class, 'show']);
+Route::middleware(['auth:api'])->group(function () {
+    Route::post('/categories', [CategoryController::class, 'store']);
+    Route::put('/categories/{id}', [CategoryController::class, 'update']);
+    Route::delete('/categories/{id}', [CategoryController::class, 'destroy']);
 });

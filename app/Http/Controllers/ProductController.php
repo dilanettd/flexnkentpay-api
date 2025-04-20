@@ -4,8 +4,8 @@ namespace App\Http\Controllers;
 
 use Illuminate\Http\Request;
 use App\Models\Product;
+use App\Models\ProductImage;
 use Illuminate\Support\Facades\Auth;
-use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Validator;
 use SimpleSoftwareIO\QrCode\Facades\QrCode;
 use Illuminate\Support\Facades\DB;
@@ -44,7 +44,6 @@ class ProductController extends Controller
                 'price' => 'required|numeric|min:0',
                 'stock_quantity' => 'required|integer|min:0',
                 'installment_count' => 'nullable|integer|min:1',
-                'min_installment_price' => 'nullable|numeric|min:0',
                 'images' => 'nullable|array',
                 'images.*' => 'image|mimes:jpeg,png,jpg,gif|max:2048',
             ]);
@@ -68,33 +67,34 @@ class ProductController extends Controller
                 'price',
                 'currency',
                 'stock_quantity',
-                'installment_count',
-                'min_installment_price'
+                'installment_count'
             ]), [
                 'product_code' => $productCode,
             ]));
 
-            // $qrCodeImage = QrCode::format('svg') // Remplacer 'png' par 'svg'
-            //     ->size(300)
-            //     ->generate($productCode);
-
-            // $qrCodePathS3 = 'qrcodes/' . $productCode . '.svg'; // Adapter l'extension
-            // Storage::disk('s3')->put($qrCodePathS3, $qrCodeImage);
-
-            // $product->update([
-            //     'product_code_url' => Storage::disk('s3')->url($qrCodePathS3),
-            // ]);
-
-
             if ($request->hasFile('images')) {
+                // Destination path within public directory
+                $destinationPath = 'uploads/products';
+
+                // Create directory if it doesn't exist
+                if (!file_exists(public_path($destinationPath))) {
+                    mkdir(public_path($destinationPath), 0755, true);
+                }
+
                 foreach ($request->file('images') as $imageFile) {
-                    $imagePath = 'images/products/' . uniqid() . '.' . $imageFile->getClientOriginalExtension();
-                    Storage::disk('s3')->put($imagePath, file_get_contents($imageFile));
+                    // Generate a unique filename
+                    $fileName = uniqid() . '_' . time() . '.' . $imageFile->getClientOriginalExtension();
+
+                    // Move the uploaded file to the public directory
+                    $imageFile->move(public_path($destinationPath), $fileName);
+
+                    // Generate the URL for direct access
+                    $imageUrl = url($destinationPath . '/' . $fileName);
 
                     $product->images()->create([
-                        'image_url' => Storage::disk('s3')->url($imagePath),
-                        'width' => getimagesize($imageFile)[0],
-                        'height' => getimagesize($imageFile)[1],
+                        'image_url' => $imageUrl,
+                        'width' => getimagesize($imageFile->getPathname())[0],
+                        'height' => getimagesize($imageFile->getPathname())[1],
                     ]);
                 }
             }
@@ -104,16 +104,6 @@ class ProductController extends Controller
             return response()->json($product->load('shop', 'images'), 201);
         } catch (Exception $e) {
             DB::rollBack();
-
-            if (isset($qrCodePathS3)) {
-                Storage::disk('s3')->delete($qrCodePathS3);
-            }
-            if ($request->hasFile('images')) {
-                foreach ($request->file('images') as $imageFile) {
-                    $imagePath = 'images/products/' . uniqid() . '.' . $imageFile->getClientOriginalExtension();
-                    Storage::disk('s3')->delete($imagePath);
-                }
-            }
 
             return response()->json(['error' => 'An error occurred, please try again.', 'details' => $e->getMessage()], 500);
         }
@@ -127,41 +117,72 @@ class ProductController extends Controller
         $validator = Validator::make($request->all(), [
             'name' => 'required|string|max:255',
             'brand' => 'nullable|string|max:255',
-            'slug' => 'required|string|max:255|unique:products,slug,' . $id,
             'category' => 'required|string|max:255',
-            'subcategory' => 'nullable|string|max:255',
             'description' => 'nullable|string',
             'currency' => 'required|string|max:3',
             'price' => 'required|numeric|min:0',
             'rating' => 'nullable|numeric|min:0|max:5',
             'visit' => 'nullable|integer|min:0',
             'stock_quantity' => 'required|integer|min:0',
-            'installment_count' => 'nullable|integer|min:1',
-            'min_installment_price' => 'nullable|numeric|min:0',
+            'images' => 'nullable|array',
+            'images.*' => 'image|mimes:jpeg,png,jpg,gif|max:2048',
         ]);
 
         if ($validator->fails()) {
             return response()->json(['errors' => $validator->errors()], 422);
         }
 
-        $product = Product::findOrFail($id);
-        $product->update($request->only([
-            'name',
-            'brand',
-            'slug',
-            'category',
-            'subcategory',
-            'description',
-            'currency',
-            'price',
-            'rating',
-            'visit',
-            'stock_quantity',
-            'installment_count',
-            'min_installment_price'
-        ]));
+        DB::beginTransaction();
+        try {
+            $product = Product::findOrFail($id);
+            $product->update($request->only([
+                'name',
+                'brand',
+                'slug',
+                'category',
+                'subcategory',
+                'description',
+                'currency',
+                'price',
+                'rating',
+                'visit',
+                'stock_quantity',
+            ]));
 
-        return response()->json($product->load('shop', 'images'), 200);
+            // Process new images if provided
+            if ($request->hasFile('images')) {
+                // Destination path within public directory
+                $destinationPath = 'uploads/products';
+
+                // Create directory if it doesn't exist
+                if (!file_exists(public_path($destinationPath))) {
+                    mkdir(public_path($destinationPath), 0755, true);
+                }
+
+                foreach ($request->file('images') as $imageFile) {
+                    // Generate a unique filename
+                    $fileName = uniqid() . '_' . time() . '.' . $imageFile->getClientOriginalExtension();
+
+                    // Move the uploaded file to the public directory
+                    $imageFile->move(public_path($destinationPath), $fileName);
+
+                    // Generate the URL for direct access
+                    $imageUrl = url($destinationPath . '/' . $fileName);
+
+                    $product->images()->create([
+                        'image_url' => $imageUrl,
+                        'width' => getimagesize($imageFile->getPathname())[0],
+                        'height' => getimagesize($imageFile->getPathname())[1],
+                    ]);
+                }
+            }
+
+            DB::commit();
+            return response()->json($product->load('shop', 'images'), 200);
+        } catch (Exception $e) {
+            DB::rollBack();
+            return response()->json(['error' => 'An error occurred, please try again.', 'details' => $e->getMessage()], 500);
+        }
     }
 
     /**
@@ -215,10 +236,34 @@ class ProductController extends Controller
      */
     public function destroy($id)
     {
-        $product = Product::findOrFail($id);
-        $product->delete();
+        DB::beginTransaction();
+        try {
+            $product = Product::with('images')->findOrFail($id);
 
-        return response()->json(['message' => 'Product deleted successfully'], 200);
+            // Delete all associated images from storage
+            foreach ($product->images as $image) {
+                // Get image path relative to the public directory
+                $path = str_replace(url('/'), '', $image->image_url);
+                $path = ltrim($path, '/');
+
+                // Delete from public storage
+                if (file_exists(public_path($path))) {
+                    unlink(public_path($path));
+                }
+
+                // Delete the image record
+                $image->delete();
+            }
+
+            // Delete the product
+            $product->delete();
+
+            DB::commit();
+            return response()->json(['message' => 'Product deleted successfully'], 200);
+        } catch (Exception $e) {
+            DB::rollBack();
+            return response()->json(['error' => 'An error occurred while deleting the product.', 'details' => $e->getMessage()], 500);
+        }
     }
 
     /**
@@ -266,7 +311,6 @@ class ProductController extends Controller
 
         return response()->json($products, 200);
     }
-
 
     /**
      * Retrieve all products for admin with filtering options.
@@ -316,10 +360,83 @@ class ProductController extends Controller
         return $product;
     }
 
+    /**
+     * Find a product by its product code.
+     */
     public function findByProductCode($code)
     {
         $product = Product::with('shop', 'images')->where('product_code', $code)->firstOrFail();
         return response()->json($product, 200);
     }
 
+    /**
+     * Upload a single product image.
+     */
+    public function uploadImage(Request $request, $productId)
+    {
+        $validator = Validator::make($request->all(), [
+            'image' => 'required|image|mimes:jpeg,png,jpg,gif|max:2048',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json(['errors' => $validator->errors()], 422);
+        }
+
+        $product = Product::findOrFail($productId);
+
+        // Destination path within public directory
+        $destinationPath = 'uploads/products';
+
+        // Create directory if it doesn't exist
+        if (!file_exists(public_path($destinationPath))) {
+            mkdir(public_path($destinationPath), 0755, true);
+        }
+
+        // Generate a unique filename
+        $fileName = uniqid() . '_' . time() . '.' . $request->file('image')->getClientOriginalExtension();
+
+        // Move the uploaded file to the public directory
+        $request->file('image')->move(public_path($destinationPath), $fileName);
+
+        // Generate the URL for direct access
+        $imageUrl = url($destinationPath . '/' . $fileName);
+
+        $image = $product->images()->create([
+            'image_url' => $imageUrl,
+            'width' => getimagesize($request->file('image')->getPathname())[0],
+            'height' => getimagesize($request->file('image')->getPathname())[1],
+        ]);
+
+        return response()->json([
+            'status' => 'success',
+            'data' => $image
+        ], 201);
+    }
+
+    /**
+     * Delete a product image.
+     */
+    public function deleteImage($productId, $imageId)
+    {
+        $product = Product::findOrFail($productId);
+
+        $image = $product->images()->findOrFail($imageId);
+
+        // Get image path relative to the public directory
+        $path = str_replace(url('/'), '', $image->image_url);
+        $path = ltrim($path, '/');
+
+        // Delete from public storage if file exists
+        if (file_exists(public_path($path))) {
+            unlink(public_path($path));
+        }
+
+        // Delete the image record
+        $image->delete();
+
+        return response()->json([
+            'status' => 'success',
+            'message' => 'Image deleted successfully'
+        ]);
+    }
 }

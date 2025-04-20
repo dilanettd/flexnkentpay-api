@@ -5,7 +5,6 @@ namespace App\Http\Controllers;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
 use App\Models\ProductImage;
-use Illuminate\Support\Facades\Storage;
 
 class ProductImageController extends Controller
 {
@@ -29,21 +28,29 @@ class ProductImageController extends Controller
             'product_id' => 'required|exists:products,id',
         ]);
 
+        // Destination path within public directory
+        $destinationPath = 'uploads/products';
+
+        // Create directory if it doesn't exist
+        if (!file_exists(public_path($destinationPath))) {
+            mkdir(public_path($destinationPath), 0755, true);
+        }
+
         foreach ($request->file('images') as $image) {
-            $extension = $image->getClientOriginalExtension();
-            $imageName = 'images/products/' . uniqid() . '.' . $extension;
+            // Generate a unique filename
+            $fileName = uniqid() . '_' . time() . '.' . $image->getClientOriginalExtension();
 
-            // Store image on S3
-            Storage::disk('s3')->put($imageName, file_get_contents($image));
+            // Move the uploaded file to the public directory
+            $image->move(public_path($destinationPath), $fileName);
 
-            // Retrieve and save the public URL
-            $publicUrl = Storage::disk('s3')->url($imageName);
+            // Generate the URL for direct access
+            $imageUrl = url($destinationPath . '/' . $fileName);
 
             // Create a new ProductImage entry
             ProductImage::create([
-                "image_url" => $publicUrl,
-                'width' => getimagesize($image)[0],
-                'height' => getimagesize($image)[1],
+                "image_url" => $imageUrl,
+                'width' => getimagesize($image->getPathname())[0],
+                'height' => getimagesize($image->getPathname())[1],
                 "product_id" => $request->product_id,
             ]);
         }
@@ -57,10 +64,16 @@ class ProductImageController extends Controller
     /**
      * Display a specific product image.
      */
-    public function show($path)
+    public function show($id)
     {
-        if (Storage::disk('s3')->exists($path)) {
-            $content = Storage::disk('s3')->get($path);
+        $image = ProductImage::findOrFail($id);
+
+        // Get image path relative to the public directory
+        $path = str_replace(url('/'), '', $image->image_url);
+        $path = ltrim($path, '/');
+
+        if (file_exists(public_path($path))) {
+            $content = file_get_contents(public_path($path));
             $extension = pathinfo($path, PATHINFO_EXTENSION);
 
             return (new Response($content, 200))
@@ -79,10 +92,17 @@ class ProductImageController extends Controller
     public function destroy($id)
     {
         $imageProduct = ProductImage::findOrFail($id);
-        $urlParts = explode('/', $imageProduct->image_url);
-        $filename = end($urlParts);
 
-        Storage::disk('s3')->delete('images/products/' . $filename);
+        // Get image path relative to the public directory
+        $path = str_replace(url('/'), '', $imageProduct->image_url);
+        $path = ltrim($path, '/');
+
+        // Delete file from public directory if it exists
+        if (file_exists(public_path($path))) {
+            unlink(public_path($path));
+        }
+
+        // Delete the database record
         $imageProduct->delete();
 
         return response()->json([

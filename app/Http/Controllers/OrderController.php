@@ -68,7 +68,6 @@ class OrderController extends Controller
         $firstPayment = $order->orderPayments()->orderBy('installment_number', 'asc')->first();
 
         if ($firstPayment) {
-            // Initiate payment for the first installment via PawaPayController
             $paymentRequest = new Request([
                 'order_payment_id' => $firstPayment->id,
                 'phone_number' => $validatedData['phone_number']

@@ -3,7 +3,6 @@
 namespace App\Http\Controllers;
 
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Auth;
 use App\Models\Seller;
 use App\Models\Shop;
@@ -82,21 +81,35 @@ class ShopController extends Controller
         ]);
 
         if ($request->hasFile('logo')) {
+            // Delete old logo if exists
             if ($shop->logo_url) {
-                $urlParts = explode('/', $shop->logo_url);
-                $filename = end($urlParts);
-                Storage::disk('s3')->delete('images/logos/' . $filename);
+                // Get image path relative to the public directory
+                $path = str_replace(url('/'), '', $shop->logo_url);
+                $path = ltrim($path, '/');
+
+                // Delete from public storage if file exists
+                if (file_exists(public_path($path))) {
+                    unlink(public_path($path));
+                }
             }
 
-            $image = $request->file('logo');
-            $extension = $image->getClientOriginalExtension();
-            $imageName = 'images/logos/' . uniqid() . "." . $extension;
-            Storage::disk('s3')->put($imageName, file_get_contents($image));
+            // Destination path within public directory
+            $destinationPath = 'uploads/shops/logos';
 
-            $shop->logo_url = Storage::disk('s3')->url($imageName);
-            Storage::disk('s3')->setVisibility($shop->logo_url, 'public');
+            // Create directory if it doesn't exist
+            if (!file_exists(public_path($destinationPath))) {
+                mkdir(public_path($destinationPath), 0755, true);
+            }
+
+            // Generate a unique filename
+            $fileName = uniqid() . '_' . time() . '.' . $request->file('logo')->getClientOriginalExtension();
+
+            // Move the uploaded file to the public directory
+            $request->file('logo')->move(public_path($destinationPath), $fileName);
+
+            // Generate the URL for direct access
+            $shop->logo_url = url($destinationPath . '/' . $fileName);
             $shop->save();
-
 
             return response()->json($user->load('seller.shop'));
         }
@@ -123,19 +136,34 @@ class ShopController extends Controller
         ]);
 
         if ($request->hasFile('cover_image')) {
+            // Delete old cover image if exists
             if ($shop->cover_photo_url) {
-                $urlParts = explode('/', $shop->cover_photo_url);
-                $filename = end($urlParts);
-                Storage::disk('s3')->delete('images/covers/' . $filename);
+                // Get image path relative to the public directory
+                $path = str_replace(url('/'), '', $shop->cover_photo_url);
+                $path = ltrim($path, '/');
+
+                // Delete from public storage if file exists
+                if (file_exists(public_path($path))) {
+                    unlink(public_path($path));
+                }
             }
 
-            $image = $request->file('cover_image');
-            $extension = $image->getClientOriginalExtension();
-            $imageName = 'images/covers/' . uniqid() . "." . $extension;
-            Storage::disk('s3')->put($imageName, file_get_contents($image));
+            // Destination path within public directory
+            $destinationPath = 'uploads/shops/covers';
 
-            $shop->cover_photo_url = Storage::disk('s3')->url($imageName);
-            Storage::disk('s3')->setVisibility($shop->cover_photo_url, 'public');
+            // Create directory if it doesn't exist
+            if (!file_exists(public_path($destinationPath))) {
+                mkdir(public_path($destinationPath), 0755, true);
+            }
+
+            // Generate a unique filename
+            $fileName = uniqid() . '_' . time() . '.' . $request->file('cover_image')->getClientOriginalExtension();
+
+            // Move the uploaded file to the public directory
+            $request->file('cover_image')->move(public_path($destinationPath), $fileName);
+
+            // Generate the URL for direct access
+            $shop->cover_photo_url = url($destinationPath . '/' . $fileName);
             $shop->save();
 
             return response()->json($user->load('seller.shop'));
@@ -174,6 +202,4 @@ class ShopController extends Controller
             'shop' => $shop
         ]);
     }
-
-
 }

@@ -10,13 +10,12 @@ use Illuminate\Validation\Rule;
 class FeeController extends Controller
 {
     /**
-     * Affiche tous les frais.
+     * Displays all fees.
      *
      * @return \Illuminate\Http\JsonResponse
      */
     public function index()
     {
-        // Vérifier que l'utilisateur est admin
         if (!Auth::user()->isAdmin()) {
             return response()->json(['message' => 'Accès non autorisé'], 403);
         }
@@ -27,14 +26,13 @@ class FeeController extends Controller
     }
 
     /**
-     * Crée un nouveau frais.
+     * Creates a new fee.
      *
      * @param Request $request
      * @return \Illuminate\Http\JsonResponse
      */
     public function store(Request $request)
     {
-        // Vérifier que l'utilisateur est admin
         if (!Auth::user()->isAdmin()) {
             return response()->json(['message' => 'Accès non autorisé'], 403);
         }
@@ -46,7 +44,6 @@ class FeeController extends Controller
             'is_active' => 'sometimes|boolean',
         ]);
 
-        // Si un frais du même type est actif, le désactiver
         if ($request->is_active ?? true) {
             Fee::where('type', $request->type)
                 ->where('is_active', true)
@@ -67,33 +64,31 @@ class FeeController extends Controller
     }
 
     /**
-     * Affiche un frais spécifique.
+     * Displays a specific fee.
      *
-     * @param string $idname
+     * @param string $type
      * @return \Illuminate\Http\JsonResponse
      */
-    public function show($name)
+    public function show($type)
     {
-
         if (!Auth::user()) {
             return response()->json(['message' => 'Accès non autorisé'], 403);
         }
 
-        $fee = Fee::where('type', $name)->first();
+        $fee = Fee::where('type', $type)->first();
 
         return response()->json($fee);
     }
 
     /**
-     * Met à jour un frais existant.
+     * Updates an existing fee.
      *
      * @param Request $request
-     * @param int $id
+     * @param string $type
      * @return \Illuminate\Http\JsonResponse
      */
-    public function update(Request $request, $id)
+    public function update(Request $request, $type)
     {
-        // Vérifier que l'utilisateur est admin
         if (!Auth::user()->isAdmin()) {
             return response()->json(['message' => 'Accès non autorisé'], 403);
         }
@@ -105,20 +100,17 @@ class FeeController extends Controller
             'is_active' => 'sometimes|boolean',
         ]);
 
-        $fee = Fee::findOrFail($id);
+        $fee = Fee::where('type', $type)->firstOrFail();
 
-        // Si nous changeons le type ou activons ce frais
         if (
             ($request->has('type') && $request->type !== $fee->type) ||
             ($request->has('is_active') && $request->is_active && !$fee->is_active)
         ) {
+            $newType = $request->type ?? $fee->type;
 
-            $type = $request->type ?? $fee->type;
-
-            // Si ce frais devient actif, désactiver les autres du même type
             if ($request->is_active ?? $fee->is_active) {
-                Fee::where('type', $type)
-                    ->where('id', '!=', $id)
+                Fee::where('type', $newType)
+                    ->where('type', '!=', $type)
                     ->where('is_active', true)
                     ->update(['is_active' => false]);
             }
@@ -133,21 +125,19 @@ class FeeController extends Controller
     }
 
     /**
-     * Supprime un frais.
+     * Deletes a fee.
      *
-     * @param int $id
+     * @param string $type
      * @return \Illuminate\Http\JsonResponse
      */
-    public function destroy($id)
+    public function destroy($type)
     {
-        // Vérifier que l'utilisateur est admin
         if (!Auth::user()->isAdmin()) {
             return response()->json(['message' => 'Accès non autorisé'], 403);
         }
 
-        $fee = Fee::findOrFail($id);
+        $fee = Fee::where('type', $type)->firstOrFail();
 
-        // Empêcher la suppression si c'est le seul frais actif de ce type
         if ($fee->is_active && Fee::where('type', $fee->type)->where('is_active', true)->count() <= 1) {
             return response()->json([
                 'message' => 'Impossible de supprimer le seul frais actif de ce type. Veuillez activer un autre frais de ce type avant de supprimer celui-ci.'
@@ -162,27 +152,24 @@ class FeeController extends Controller
     }
 
     /**
-     * Active un frais et désactive les autres du même type.
+     * Activates a fee and deactivates others of the same type.
      *
-     * @param int $id
+     * @param string $type
      * @return \Illuminate\Http\JsonResponse
      */
-    public function activate($id)
+    public function activate($type)
     {
-        // Vérifier que l'utilisateur est admin
         if (!Auth::user()->isAdmin()) {
             return response()->json(['message' => 'Accès non autorisé'], 403);
         }
 
-        $fee = Fee::findOrFail($id);
+        $fee = Fee::where('type', $type)->firstOrFail();
 
-        // Désactiver tous les autres frais du même type
         Fee::where('type', $fee->type)
-            ->where('id', '!=', $id)
+            ->where('type', '!=', $type)
             ->where('is_active', true)
             ->update(['is_active' => false]);
 
-        // Activer ce frais
         $fee->is_active = true;
         $fee->save();
 
@@ -193,7 +180,7 @@ class FeeController extends Controller
     }
 
     /**
-     * Récupère les frais actifs pour chaque type.
+     * Gets active fees for each type.
      *
      * @return \Illuminate\Http\JsonResponse
      */
