@@ -178,6 +178,8 @@ Route::middleware(['auth:api'])->group(function () {
 
 // Routes pour la gestion des frais (Fees)
 Route::get('/categories', [CategoryController::class, 'index']);
+Route::get('/categories/top', [CategoryController::class, 'getTopCategories']);
+Route::get('/categories/top-with-products', [CategoryController::class, 'getTopCategoriesWithProducts']);
 Route::get('/categories/{id}', [CategoryController::class, 'show']);
 Route::middleware(['auth:api'])->group(function () {
     Route::post('/categories', [CategoryController::class, 'store']);

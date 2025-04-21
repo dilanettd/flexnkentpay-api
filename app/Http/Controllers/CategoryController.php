@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Models\Category;
+use App\Models\Product;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Validation\Rule;
@@ -79,6 +80,62 @@ class CategoryController extends Controller
             'message' => 'Catégorie mise à jour avec succès',
             'category' => $category,
         ]);
+    }
+
+    /**
+     * Get top categories with the most products
+     * 
+     * @param Request $request
+     * @return \Illuminate\Http\JsonResponse
+     */
+    public function getTopCategories(Request $request)
+    {
+        $limit = $request->input('limit', 5);
+
+        // Get categories with product count, ordered by count in descending order
+        $categories = \DB::table('products')
+            ->select('category', \DB::raw('count(*) as product_count'))
+            ->groupBy('category')
+            ->orderBy('product_count', 'desc')
+            ->limit($limit)
+            ->get();
+
+        return response()->json($categories);
+    }
+
+
+    /**
+     * Get top categories with products in a single request
+     */
+    public function getTopCategoriesWithProducts(Request $request)
+    {
+        $categoryLimit = $request->input('categoryLimit', 5);
+        $productLimit = $request->input('productLimit', 10);
+
+        $topCategories = \DB::table('products')
+            ->select('category', \DB::raw('count(*) as product_count'))
+            ->groupBy('category')
+            ->orderBy('product_count', 'desc')
+            ->limit($categoryLimit)
+            ->get();
+
+        $result = [];
+        foreach ($topCategories as $category) {
+            $products = Product::with(['images'])
+                ->where('category', $category->category)
+                ->where('is_active', true)
+                ->orderBy('created_at', 'desc')
+                ->limit($productLimit)
+                ->get();
+
+            $result[] = [
+                'category' => $category->category,
+                'product_count' => $category->product_count,
+                'products' => $products
+            ];
+        }
+
+        return response()->json($result);
     }
 
     /**

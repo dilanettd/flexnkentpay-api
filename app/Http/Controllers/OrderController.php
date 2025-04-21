@@ -8,7 +8,6 @@ use App\Models\OrderPayment;
 use App\Models\Fee;
 use App\Models\Product;
 use Illuminate\Support\Facades\Auth;
-use Illuminate\Support\Facades\Log;
 
 class OrderController extends Controller
 {
