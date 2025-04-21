@@ -6,6 +6,14 @@ use Illuminate\Auth\Events\Registered;
 use Illuminate\Auth\Listeners\SendEmailVerificationNotification;
 use Illuminate\Foundation\Support\Providers\EventServiceProvider as ServiceProvider;
 use Illuminate\Support\Facades\Event;
+use App\Events\UserRegistered;
+use App\Events\PasswordResetRequested;
+use App\Events\FirstOrderPaymentSuccessful;
+use App\Events\OrderPaymentSuccessful;
+use App\Listeners\SendAccountConfirmationEmail;
+use App\Listeners\SendPasswordResetEmail;
+use App\Listeners\SendOrderFirstPaymentEmail;
+use App\Listeners\SendOrderPaymentEmail;
 
 class EventServiceProvider extends ServiceProvider
 {

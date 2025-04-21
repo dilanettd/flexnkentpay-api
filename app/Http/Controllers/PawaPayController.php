@@ -7,7 +7,6 @@ use App\Models\PawaPayWebhook;
 use App\Models\MomoTransaction;
 use App\Models\User;
 use App\Models\OrderPayment;
-use App\Events\OrderPaymentSuccessful;
 use App\Models\ProviderUsage;
 use App\Models\PawaPay;
 use App\Utils\Constants;
@@ -15,7 +14,6 @@ use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 use Carbon\Carbon;
-use App\Events\FirstOrderPaymentSuccessful;
 use App\Services\PawaPaySignatureService;
 
 class PawaPayController extends Controller
@@ -110,10 +108,16 @@ class PawaPayController extends Controller
 
                 if (isset($responseData['status']) && $responseData['status'] === PawaPay::STATUS_ACCEPTED) {
                     $transaction->status = 'success';
-                    $orderPayment->markAsPaid($transaction->id);
-                }
+                    $transaction->save();
 
-                $transaction->save();
+                    // Utilisation de markAsPaid qui déclenche les événements appropriés
+                    $orderPayment->markAsPaid($transaction->id);
+
+                    // Mettre à jour les statistiques d'utilisation
+                    ProviderUsage::updateDepositUsage('pawapay', $amount);
+                } else {
+                    $transaction->save();
+                }
 
                 return response()->json([
                     'status' => 'success',
@@ -125,7 +129,6 @@ class PawaPayController extends Controller
                         'amount' => $orderPayment->amount_paid,
                         'penalty_fees' => $orderPayment->penalty_fees,
                         'total_amount' => $amount,
-
                     ]
                 ]);
             } else {
@@ -199,14 +202,25 @@ class PawaPayController extends Controller
                 $responseData = $statusResponse['data'];
 
                 if (isset($responseData['status'])) {
-                    $transaction->status = strtolower($responseData['status']);
+                    $previousStatus = $transaction->status;
+                    $newStatus = strtolower($responseData['status']);
+                    $transaction->status = $newStatus;
                     $transaction->save();
 
-                    if ($transaction->status === PawaPay::STATUS_COMPLETED) {
+                    // Si le statut devient "completed" et qu'il était en attente ou accepté
+                    if (
+                        $newStatus === PawaPay::STATUS_COMPLETED &&
+                        ($previousStatus === PawaPay::STATUS_PENDING || $previousStatus === PawaPay::STATUS_ACCEPTED)
+                    ) {
+
                         $orderPayment = OrderPayment::where('momo_transaction_id', $transaction->id)->first();
 
-                        if ($orderPayment) {
-                            $this->updateOrderPaymentOnSuccess($orderPayment, $transaction);
+                        if ($orderPayment && $orderPayment->status !== 'success') {
+                            // Utiliser markAsPaid pour traiter le paiement et envoyer les emails
+                            $orderPayment->markAsPaid($transaction->id);
+
+                            // Mettre à jour les statistiques d'utilisation
+                            ProviderUsage::updateDepositUsage('pawapay', $transaction->amount);
                         }
                     }
                 }
@@ -428,20 +442,32 @@ class PawaPayController extends Controller
                 }
             }
 
+            // Gestion des paiements réussis
             if (
                 $status == PawaPay::STATUS_COMPLETED &&
                 ($currentStatus == PawaPay::STATUS_PENDING || $currentStatus == PawaPay::STATUS_ACCEPTED)
             ) {
-                $this->handleSuccessfulTransaction($momoTransaction, $amount);
+
+                $orderPayment = OrderPayment::where('momo_transaction_id', $momoTransaction->id)->first();
+
+                if ($orderPayment && $orderPayment->status !== 'success') {
+                    // Utiliser markAsPaid pour traiter le paiement et envoyer les emails
+                    $orderPayment->markAsPaid($momoTransaction->id);
+
+                    // Mettre à jour les statistiques d'utilisation
+                    ProviderUsage::updateDepositUsage('pawapay', $amount);
+
+                    Log::info("[PawaPay processWebhookData] Payment marked as paid", [
+                        'order_payment_id' => $orderPayment->id,
+                        'transaction_id' => $transactionId
+                    ]);
+                }
             }
 
-            if (
-                $status == PawaPay::STATUS_ACCEPTED
-            ) {
+            // Si le statut est accepté, marquer la transaction comme réussie
+            if ($status == PawaPay::STATUS_ACCEPTED) {
                 $momoTransaction->status = "success";
-                $momoTransaction->save();
             } else {
-
                 $momoTransaction->status = $status;
             }
 
@@ -464,105 +490,6 @@ class PawaPayController extends Controller
             ]);
             return ['error' => 'Error processing webhook: ' . $e->getMessage()];
         }
-    }
-
-    /**
-     * Handles a successful transaction.
-     *
-     * @param MomoTransaction $momoTransaction
-     * @param float $amount
-     * @return void
-     */
-    private function handleSuccessfulTransaction(MomoTransaction $momoTransaction, float $amount): void
-    {
-        $orderPayment = OrderPayment::where('momo_transaction_id', $momoTransaction->id)->first();
-
-        if ($orderPayment) {
-            $orderPayment->status = 'success';
-            $orderPayment->payment_date = now();
-            $orderPayment->save();
-
-            $order = $orderPayment->order;
-            $order->remaining_amount -= $orderPayment->amount_paid;
-            $order->remaining_installments -= 1;
-
-            if ($orderPayment->installment_number == 1) {
-                $order->is_confirmed = true;
-
-                event(new FirstOrderPaymentSuccessful($order, $orderPayment));
-
-                Log::info("[PawaPay handleSuccessfulTransaction] Order confirmed", [
-                    'order_id' => $order->id,
-                    'payment_id' => $orderPayment->id
-                ]);
-            }
-
-            $isLastPayment = $order->remaining_installments <= 0 || $order->remaining_amount <= 0;
-
-            if ($isLastPayment) {
-                $order->is_completed = true;
-            }
-
-            $order->save();
-
-            // Déclencher l'événement pour tout paiement réussi (autre que le premier)
-            if ($orderPayment->installment_number > 1) {
-                event(new OrderPaymentSuccessful($order, $orderPayment, $isLastPayment));
-            }
-
-            ProviderUsage::updateDepositUsage('pawapay', $amount);
-
-            Log::info("[PawaPay handleSuccessfulTransaction] Order payment updated", [
-                'order_payment_id' => $orderPayment->id,
-                'order_id' => $order->id,
-                'status' => 'success',
-                'is_confirmed' => $order->is_confirmed,
-                'is_completed' => $order->is_completed,
-                'is_last_payment' => $isLastPayment
-            ]);
-        }
-    }
-
-    /**
-     * Updates order payment when a transaction is successful.
-     *
-     * @param OrderPayment $orderPayment
-     * @param MomoTransaction $transaction
-     * @return void
-     */
-    private function updateOrderPaymentOnSuccess(OrderPayment $orderPayment, MomoTransaction $transaction)
-    {
-        $orderPayment->status = 'success';
-        $orderPayment->payment_date = now();
-        $orderPayment->save();
-
-        $order = $orderPayment->order;
-        $order->remaining_amount -= $orderPayment->amount_paid;
-        $order->remaining_installments -= 1;
-
-        if ($orderPayment->installment_number == 1) {
-            $order->is_confirmed = true;
-            event(new FirstOrderPaymentSuccessful($order, $orderPayment));
-        }
-
-        $isLastPayment = $order->remaining_installments <= 0 || $order->remaining_amount <= 0;
-
-        if ($isLastPayment) {
-            $order->is_completed = true;
-        }
-
-        $order->save();
-
-        if ($orderPayment->installment_number > 1) {
-            event(new OrderPaymentSuccessful($order, $orderPayment, $isLastPayment));
-        }
-
-        Log::info('Paiement mis à jour avec succès', [
-            'order_id' => $order->id,
-            'payment_id' => $orderPayment->id,
-            'transaction_id' => $transaction->transaction_id,
-            'is_last_payment' => $isLastPayment
-        ]);
     }
 
     /**

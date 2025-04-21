@@ -4,6 +4,9 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Support\Facades\Log;
+use App\Events\FirstOrderPaymentSuccessful;
+use App\Events\OrderPaymentSuccessful;
 use Carbon\Carbon;
 
 class OrderPayment extends Model
@@ -77,12 +80,44 @@ class OrderPayment extends Model
             $order->remaining_amount -= ($this->amount_paid + $this->penalty_fees);
             $order->remaining_installments -= 1;
 
+            // Vérifier si c'est le dernier paiement
+            $isLastPayment = $order->remaining_installments <= 0 || $order->remaining_amount <= 0;
+
+            // Si c'est le premier paiement, confirmer la commande et envoyer l'email de premier paiement
             if ($this->installment_number == 1) {
                 $order->is_confirmed = true;
-            }
 
-            if ($order->remaining_installments <= 0 || $order->remaining_amount <= 0) {
-                $order->is_completed = true;
+                // Déclencher explicitement l'événement du premier paiement
+                Log::info('Envoi de l\'email pour le premier paiement', [
+                    'order_id' => $order->id,
+                    'payment_id' => $this->id
+                ]);
+                event(new FirstOrderPaymentSuccessful($order, $this));
+
+                // Si le premier paiement est aussi le dernier, on marque la commande comme complétée
+                if ($isLastPayment) {
+                    $order->is_completed = true;
+
+                    // Dans ce cas, envoyer aussi l'email de paiement final
+                    Log::info('Envoi de l\'email de paiement final (premier et dernier paiement)', [
+                        'order_id' => $order->id,
+                        'payment_id' => $this->id
+                    ]);
+                    event(new OrderPaymentSuccessful($order, $this, true));
+                }
+            }
+            // Pour les paiements suivants (pas le premier)
+            else if ($this->installment_number > 1) {
+                if ($isLastPayment) {
+                    $order->is_completed = true;
+                }
+
+                Log::info('Envoi de l\'email de paiement régulier ou final', [
+                    'order_id' => $order->id,
+                    'payment_id' => $this->id,
+                    'is_last_payment' => $isLastPayment
+                ]);
+                event(new OrderPaymentSuccessful($order, $this, $isLastPayment));
             }
 
             $order->save();
