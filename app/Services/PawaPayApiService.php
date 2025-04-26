@@ -13,7 +13,7 @@ class PawaPayApiService
     public function __construct()
     {
         $this->api_token = config('services.pawapay.api_token');
-        $this->baseUrl = config('services.pawapay.base_url', 'https://api.sandbox.pawapay.io');
+        $this->baseUrl = config('services.pawapay.base_url', 'https://api.pawapay.io');
     }
 
     /**
@@ -22,24 +22,54 @@ class PawaPayApiService
     public function sendRequest($endpoint, $data, $method = 'POST')
     {
         $payload = json_encode($data);
+        $externalId = $data['depositId'] ?? $data['payoutId'] ?? $data['refundId'] ?? null;
+
+        $fullUrl = $this->baseUrl . '/' . ltrim($endpoint, '/');
+
+        // Log de la requête
+        Log::info("Requête envoyée à l'API PawaPay", [
+            'method' => $method,
+            'endpoint' => $endpoint,
+            'url' => $fullUrl,
+            'external_id' => $externalId,
+            'payload' => $this->sanitizeResponse($data)
+        ]);
 
         try {
             $headers = ['Content-Type' => 'application/json'];
-            $fullUrl = $this->baseUrl . '/' . ltrim($endpoint, '/');
 
             $request = Http::withHeaders($headers);
             $request = $request->withToken($this->api_token, 'Bearer');
 
+            $startTime = microtime(true);
             $response = $request->withBody($payload, 'application/json')
                 ->send($method, $fullUrl);
+            $endTime = microtime(true);
+            $executionTime = round(($endTime - $startTime) * 1000, 2); // Temps en millisecondes
 
-            if (!$response->successful()) {
-                $externalId = $data['depositId'] ?? $data['payoutId'] ?? $data['refundId'] ?? null;
+            // Log de la réponse
+            if ($response->successful()) {
+                Log::info("Réponse reçue de l'API PawaPay", [
+                    'status_code' => $response->status(),
+                    'execution_time_ms' => $executionTime,
+                    'endpoint' => $endpoint,
+                    'url' => $fullUrl,
+                    'external_id' => $externalId,
+                    'response' => $this->sanitizeResponse($response->json())
+                ]);
 
+                return [
+                    'success' => true,
+                    'data' => $response->json(),
+                    'execution_time_ms' => $executionTime
+                ];
+            } else {
                 Log::error("Erreur lors de l'appel à l'API PawaPay", [
                     'status_code' => $response->status(),
+                    'execution_time_ms' => $executionTime,
                     'response' => $this->sanitizeResponse($response->json()),
                     'endpoint' => $endpoint,
+                    'url' => $fullUrl,
                     'external_id' => $externalId
                 ]);
 
@@ -47,18 +77,16 @@ class PawaPayApiService
                     'success' => false,
                     'error' => 'Erreur API: ' . $response->status(),
                     'details' => $this->sanitizeResponse($response->json()),
-                    'status_code' => $response->status()
+                    'status_code' => $response->status(),
+                    'execution_time_ms' => $executionTime
                 ];
             }
-
-            return [
-                'success' => true,
-                'data' => $response->json()
-            ];
         } catch (\Exception $e) {
             Log::error('Exception lors de l\'appel à l\'API PawaPay', [
                 'error' => $e->getMessage(),
                 'endpoint' => $endpoint,
+                'url' => $fullUrl,
+                'external_id' => $externalId,
                 'trace' => $e->getTraceAsString()
             ]);
 
@@ -78,7 +106,7 @@ class PawaPayApiService
             return ['response' => 'non-array response'];
         }
 
-        $sensitiveKeys = ['token', 'password', 'secret', 'key', 'auth', 'credential', 'private'];
+        $sensitiveKeys = ['token', 'password', 'secret', 'key', 'auth', 'credential', 'private', 'apiKey'];
 
         $sanitize = function ($data) use (&$sanitize, $sensitiveKeys) {
             if (!is_array($data)) {

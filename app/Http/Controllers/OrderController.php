@@ -244,9 +244,9 @@ class OrderController extends Controller
     /**
      * Cancel an order along with its associated order payments
      */
-    public function cancelOrder(Request $request, $id)
+    public function cancelOrder(Request $request, $orderId)
     {
-        $order = Order::where('id', $id)
+        $order = Order::where('id', $orderId)
             ->where('user_id', Auth::id())
             ->first();
 
@@ -259,10 +259,6 @@ class OrderController extends Controller
         if ($hasSuccessfulPayment) {
             return response()->json(['message' => 'Cannot cancel an order with successful payments.'], 400);
         }
-
-        // Delete associated MOMO transactions
-        $orderPaymentIds = $order->orderPayments()->pluck('id')->toArray();
-        MomoTransaction::whereIn('momo_transaction_id', $orderPaymentIds)->delete();
 
         // Delete payments and order
         $order->orderPayments()->delete();

@@ -9,6 +9,13 @@ class PawaPayWebhook extends Model
 {
     use HasFactory;
 
+    /**
+     * The table associated with the model.
+     *
+     * @var string
+     */
+    protected $table = 'pawapay_webhooks';
+
     protected $fillable = [
         'transaction_id',
         'transaction_type',

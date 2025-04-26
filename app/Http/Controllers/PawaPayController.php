@@ -14,20 +14,17 @@ use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 use Carbon\Carbon;
-use App\Services\PawaPaySignatureService;
 
 class PawaPayController extends Controller
 {
     protected $pawaPayModel;
-    protected $signatureService;
 
     /**
      * Constructor
      */
-    public function __construct(PawaPay $pawaPayModel = null, PawaPaySignatureService $signatureService = null)
+    public function __construct(PawaPay $pawaPayModel = null)
     {
         $this->pawaPayModel = $pawaPayModel ?: new PawaPay();
-        $this->signatureService = $signatureService ?: new PawaPaySignatureService();
     }
 
     /**
@@ -106,18 +103,23 @@ class PawaPayController extends Controller
                     $transaction->provider_transaction_id = $responseData['depositId'];
                 }
 
-                if (isset($responseData['status']) && $responseData['status'] === PawaPay::STATUS_ACCEPTED) {
-                    $transaction->status = 'success';
-                    $transaction->save();
+                // Mise à jour du statut de la transaction en fonction du mappage
+                if (isset($responseData['status'])) {
+                    // Utilisation du mappage de statut au lieu de vérifier explicitement 'accepted'
+                    $mappedStatus = isset($responseData['mappedStatus'])
+                        ? $responseData['mappedStatus']
+                        : PawaPay::mapStatus($responseData['status']);
 
-                    // Utilisation de markAsPaid qui déclenche les événements appropriés
-                    $orderPayment->markAsPaid($transaction->id);
+                    $transaction->status = $mappedStatus;
 
-                    // Mettre à jour les statistiques d'utilisation
-                    ProviderUsage::updateDepositUsage('pawapay', $amount);
-                } else {
-                    $transaction->save();
+                    // Seul COMPLETED entraîne un paiement réussi - ce qui ne devrait pas arriver lors de l'initiation
+                    if ($mappedStatus === 'success') {
+                        $orderPayment->markAsPaid($transaction->id);
+                        ProviderUsage::updateDepositUsage('pawapay', $amount);
+                    }
                 }
+
+                $transaction->save();
 
                 return response()->json([
                     'status' => 'success',
@@ -203,16 +205,18 @@ class PawaPayController extends Controller
 
                 if (isset($responseData['status'])) {
                     $previousStatus = $transaction->status;
-                    $newStatus = strtolower($responseData['status']);
-                    $transaction->status = $newStatus;
+                    $pawaPayStatus = strtolower($responseData['status']);
+
+                    // Utilisation du mappage de statut pour déterminer le statut interne
+                    $mappedStatus = isset($responseData['mappedStatus'])
+                        ? $responseData['mappedStatus']
+                        : PawaPay::mapStatus($pawaPayStatus);
+
+                    $transaction->status = $mappedStatus;
                     $transaction->save();
 
-                    // Si le statut devient "completed" et qu'il était en attente ou accepté
-                    if (
-                        $newStatus === PawaPay::STATUS_COMPLETED &&
-                        ($previousStatus === PawaPay::STATUS_PENDING || $previousStatus === PawaPay::STATUS_ACCEPTED)
-                    ) {
-
+                    // Maintenant, seul un statut COMPLETED entraîne un changement de statut du paiement
+                    if ($mappedStatus === 'success' && $previousStatus !== 'success') {
                         $orderPayment = OrderPayment::where('momo_transaction_id', $transaction->id)->first();
 
                         if ($orderPayment && $orderPayment->status !== 'success') {
@@ -225,18 +229,10 @@ class PawaPayController extends Controller
                     }
                 }
 
-                return response()->json([
-                    'status' => 'success',
-                    'transaction' => $transaction,
-                    'pawapay_status' => $responseData
-                ]);
+                return $transaction;
             }
 
-            return response()->json([
-                'status' => 'error',
-                'message' => $statusResponse['message'] ?? 'Erreur lors de la vérification du statut',
-                'transaction' => $transaction
-            ], 400);
+            return $transaction;
 
         } catch (\Exception $e) {
             Log::error('Exception lors de la vérification du statut de la transaction', [
@@ -268,12 +264,7 @@ class PawaPayController extends Controller
 
         $data = $request->all();
 
-        if (!$this->verifyWebhookSignature($request)) {
-            Log::error("[PawaPay handleWebhook] Invalid webhook signature", [
-                'event_type' => $eventType
-            ]);
-            return response()->json(['message' => 'Invalid signature'], 401);
-        }
+        // Vérification de sécurité des webhooks retirée comme demandé
 
         $validEventTypes = [PawaPay::TYPE_DEPOSIT, PawaPay::TYPE_PAYOUT, PawaPay::TYPE_REFUND];
         if (!in_array(strtolower($eventType), $validEventTypes)) {
@@ -290,55 +281,6 @@ class PawaPayController extends Controller
         }
 
         return response()->json(['message' => 'Webhook processed successfully']);
-    }
-
-    /**
-     * Verifies the webhook signature for security.
-     *
-     * @param Request $request
-     * @return bool
-     */
-    private function verifyWebhookSignature(Request $request)
-    {
-        $webhookSecret = config('services.pawapay.webhook_secret');
-
-        if (empty($webhookSecret)) {
-            return true;
-        }
-
-        $signature = $request->header('X-PawaPay-Signature');
-        $timestamp = $request->header('X-PawaPay-Timestamp');
-
-        if (empty($signature)) {
-            Log::warning('Signature de webhook manquante');
-            return false;
-        }
-
-        if (!empty($timestamp)) {
-            $timestampDate = \DateTime::createFromFormat('c', $timestamp);
-            if ($timestampDate) {
-                $now = new \DateTime();
-                $diff = $now->getTimestamp() - $timestampDate->getTimestamp();
-
-                if ($diff > 300) {
-                    Log::warning('Timestamp de webhook trop ancien', [
-                        'timestamp' => $timestamp,
-                        'diff' => $diff
-                    ]);
-                    return false;
-                }
-            }
-        }
-
-        $payload = $request->getContent();
-
-        return $this->signatureService->verifyIncomingSignature(
-            $payload,
-            $signature,
-            $timestamp,
-            $request->method(),
-            $request->path()
-        );
     }
 
     /**
@@ -420,10 +362,14 @@ class PawaPayController extends Controller
             $transactionId = $momoTransaction->transaction_id;
             $currentStatus = $momoTransaction->status;
 
+            // Utiliser le mappage de statut
+            $mappedStatus = PawaPay::mapStatus($status);
+
             if ($status == PawaPay::STATUS_DUPLICATE_IGNORED) {
                 return ['message' => 'Duplicate transaction ignored'];
             }
 
+            // Gérer les états d'échec
             if (in_array($status, [PawaPay::STATUS_FAILED, PawaPay::STATUS_REJECTED])) {
                 $orderPayment = OrderPayment::where('momo_transaction_id', $momoTransaction->id)->first();
 
@@ -442,12 +388,8 @@ class PawaPayController extends Controller
                 }
             }
 
-            // Gestion des paiements réussis
-            if (
-                $status == PawaPay::STATUS_COMPLETED &&
-                ($currentStatus == PawaPay::STATUS_PENDING || $currentStatus == PawaPay::STATUS_ACCEPTED)
-            ) {
-
+            // Gestion des paiements réussis - SEULEMENT avec le statut COMPLETED
+            if ($status == PawaPay::STATUS_COMPLETED && $currentStatus !== 'success') {
                 $orderPayment = OrderPayment::where('momo_transaction_id', $momoTransaction->id)->first();
 
                 if ($orderPayment && $orderPayment->status !== 'success') {
@@ -464,19 +406,15 @@ class PawaPayController extends Controller
                 }
             }
 
-            // Si le statut est accepté, marquer la transaction comme réussie
-            if ($status == PawaPay::STATUS_ACCEPTED) {
-                $momoTransaction->status = "success";
-            } else {
-                $momoTransaction->status = $status;
-            }
-
+            // Mettre à jour le statut de la transaction MoMo
+            $momoTransaction->status = $mappedStatus;
             $momoTransaction->updated_at = now();
             $momoTransaction->save();
 
             Log::info("[PawaPay processWebhookData] Transaction status updated", [
                 'transaction_id' => $transactionId,
-                'status' => $status
+                'pawapay_status' => $status,
+                'mapped_status' => $mappedStatus
             ]);
 
             $this->sendTransactionNotification($momoTransaction, $status);
@@ -505,10 +443,14 @@ class PawaPayController extends Controller
             $user = User::find($momoTransaction->user_id);
 
             if ($user) {
+                // Convertir le statut PawaPay en statut interne pour les notifications
+                $mappedStatus = PawaPay::mapStatus($status);
+
                 Log::info("[PawaPay sendTransactionNotification] Notification envoyée", [
                     'user_id' => $momoTransaction->user_id,
                     'transaction_id' => $momoTransaction->transaction_id,
-                    'status' => $status,
+                    'pawapay_status' => $status,
+                    'mapped_status' => $mappedStatus,
                     'amount' => $momoTransaction->amount,
                     'phone_number' => $momoTransaction->phone_number
                 ]);

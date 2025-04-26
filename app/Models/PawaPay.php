@@ -11,9 +11,9 @@ class PawaPay extends Model
 {
     // Constants de statut
     const STATUS_PENDING = 'pending';
-    const STATUS_ACCEPTED = 'accepted';
-    const STATUS_SUBMITTED = 'submitted';
-    const STATUS_COMPLETED = 'completed';
+    const STATUS_ACCEPTED = 'accepted';  // États intermédiaires: toujours considérés comme pending côté application
+    const STATUS_SUBMITTED = 'submitted'; // États intermédiaires: toujours considérés comme pending côté application
+    const STATUS_COMPLETED = 'completed'; // Seul status considéré comme success
     const STATUS_FAILED = 'failed';
     const STATUS_REJECTED = 'rejected';
     const STATUS_DUPLICATE_IGNORED = 'duplicate_ignored';
@@ -29,6 +29,17 @@ class PawaPay extends Model
 
     const PROVIDER_TYPE = 'pawapay';
 
+    // Mapping de statut PawaPay vers statuts internes
+    const STATUS_MAPPING = [
+        self::STATUS_PENDING => 'pending',
+        self::STATUS_ACCEPTED => 'pending', // Maintenant mapped à pending
+        self::STATUS_SUBMITTED => 'pending', // Maintenant mapped à pending
+        self::STATUS_COMPLETED => 'success', // Seul status mapped à success
+        self::STATUS_FAILED => 'failed',
+        self::STATUS_REJECTED => 'failed',
+        self::STATUS_DUPLICATE_IGNORED => 'failed'
+    ];
+
     protected $apiService;
     protected $formatterService;
 
@@ -40,6 +51,18 @@ class PawaPay extends Model
         parent::__construct($attributes);
         $this->apiService = new PawaPayApiService();
         $this->formatterService = new PawaPayFormatterService();
+    }
+
+    /**
+     * Convertit un statut PawaPay en statut interne de l'application
+     * 
+     * @param string $pawaPayStatus
+     * @return string
+     */
+    public static function mapStatus($pawaPayStatus)
+    {
+        $normalizedStatus = strtolower($pawaPayStatus);
+        return self::STATUS_MAPPING[$normalizedStatus] ?? 'pending';
     }
 
     /**
@@ -98,6 +121,8 @@ class PawaPay extends Model
 
                 if (isset($responseData['status'])) {
                     $responseData['status'] = strtolower($responseData['status']);
+                    // Utiliser mapStatus pour convertir le statut PawaPay en statut interne
+                    $responseData['mappedStatus'] = self::mapStatus($responseData['status']);
                 }
 
                 return [
@@ -141,6 +166,8 @@ class PawaPay extends Model
 
                     if (isset($depositData['status'])) {
                         $depositData['status'] = strtolower($depositData['status']);
+                        // Utiliser mapStatus pour convertir le statut PawaPay en statut interne
+                        $depositData['mappedStatus'] = self::mapStatus($depositData['status']);
                     }
 
                     if (isset($depositData['suspiciousActivityReport']) && !empty($depositData['suspiciousActivityReport'])) {
@@ -250,6 +277,8 @@ class PawaPay extends Model
 
                 if (isset($responseData['status'])) {
                     $responseData['status'] = strtolower($responseData['status']);
+                    // Utiliser mapStatus pour convertir le statut PawaPay en statut interne
+                    $responseData['mappedStatus'] = self::mapStatus($responseData['status']);
                 }
 
                 return [
@@ -293,6 +322,8 @@ class PawaPay extends Model
 
                     if (isset($payoutData['status'])) {
                         $payoutData['status'] = strtolower($payoutData['status']);
+                        // Utiliser mapStatus pour convertir le statut PawaPay en statut interne
+                        $payoutData['mappedStatus'] = self::mapStatus($payoutData['status']);
                     }
 
                     return [
@@ -359,6 +390,8 @@ class PawaPay extends Model
 
                 if (isset($responseData['status'])) {
                     $responseData['status'] = strtolower($responseData['status']);
+                    // Utiliser mapStatus pour convertir le statut PawaPay en statut interne
+                    $responseData['mappedStatus'] = self::mapStatus($responseData['status']);
                 }
 
                 return [
@@ -403,6 +436,8 @@ class PawaPay extends Model
 
                     if (isset($refundData['status'])) {
                         $refundData['status'] = strtolower($refundData['status']);
+                        // Utiliser mapStatus pour convertir le statut PawaPay en statut interne
+                        $refundData['mappedStatus'] = self::mapStatus($refundData['status']);
                     }
 
                     return [

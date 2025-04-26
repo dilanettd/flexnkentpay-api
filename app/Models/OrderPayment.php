@@ -86,6 +86,7 @@ class OrderPayment extends Model
             // Si c'est le premier paiement, confirmer la commande et envoyer l'email de premier paiement
             if ($this->installment_number == 1) {
                 $order->is_confirmed = true;
+                $this->reduceProductStock($order);
 
                 // Déclencher explicitement l'événement du premier paiement
                 Log::info('Envoi de l\'email pour le premier paiement', [
@@ -124,5 +125,51 @@ class OrderPayment extends Model
         }
 
         return $saved;
+    }
+
+    /**
+     * Réduit le stock du produit lorsqu'une commande est confirmée
+     * 
+     * @param Order $order
+     * @return void
+     */
+    private function reduceProductStock(Order $order)
+    {
+        try {
+            $product = Product::find($order->product_id);
+
+            if ($product) {
+                // Soustraire la quantité commandée du stock disponible
+                $currentStock = $product->stock_quantity;
+                $orderedQuantity = $order->quantity;
+
+                // Assurer que le stock ne devient pas négatif
+                $newStock = max(0, $currentStock - $orderedQuantity);
+
+                // Mettre à jour le stock
+                $product->stock_quantity = $newStock;
+                $product->save();
+
+                Log::info('Stock de produit réduit suite à confirmation de commande', [
+                    'product_id' => $product->id,
+                    'order_id' => $order->id,
+                    'previous_stock' => $currentStock,
+                    'ordered_quantity' => $orderedQuantity,
+                    'new_stock' => $newStock
+                ]);
+            } else {
+                Log::warning('Impossible de réduire le stock: produit non trouvé', [
+                    'order_id' => $order->id,
+                    'product_id' => $order->product_id
+                ]);
+            }
+        } catch (\Exception $e) {
+            Log::error('Erreur lors de la réduction du stock de produit', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+                'order_id' => $order->id,
+                'product_id' => $order->product_id
+            ]);
+        }
     }
 }

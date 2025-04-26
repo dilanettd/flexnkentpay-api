@@ -117,7 +117,7 @@ Route::middleware('auth:api')->group(function () {
     Route::post('/order', [OrderController::class, 'store']);
     Route::get('/orders/user', [OrderController::class, 'getUserOrders']);
     Route::get('/orders/seller', [OrderController::class, 'getSellerOrders']);
-    Route::delete('/orders/{id}/cancel', [OrderController::class, 'cancelOrder']);
+    Route::delete('/orders/{orderId}/cancel', [OrderController::class, 'cancelOrder']);
     Route::post('/orders/{orderId}/retry-confirmation', [OrderController::class, 'retryConfirmationPayment']);
 });
 
